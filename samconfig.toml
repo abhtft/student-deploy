@@ -1,0 +1,10 @@
+version = 0.1
+
+# `sam deploy` reads this file, so no prompts. Account/cert values are identifiers, not secrets.
+[default.deploy.parameters]
+stack_name = "student-hosting"
+region = "us-east-1"
+resolve_s3 = true
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+parameter_overrides = "RootDomain=\"margdarshakss.com\" CertificateArn=\"arn:aws:acm:us-east-1:417780655868:certificate/6a5e2ee0-71cd-4d9b-9b5c-7d43b675d9bb\""

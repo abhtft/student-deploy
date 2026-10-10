@@ -1,0 +1,117 @@
+#!/usr/bin/env node
+// Local test suite - no AWS needed.  Usage: node tests/run.mjs   (needs Node 18+, Python 3 + boto3)
+import assert from 'node:assert/strict';
+import { spawn, spawnSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const here = dirname(fileURLToPath(import.meta.url));
+const root = join(here, '..');
+const python = spawnSync('python', ['--version']).status === 0 ? 'python' : 'python3';
+const PORT = 8765;
+let failures = 0;
+
+async function step(name, fn) {
+  try {
+    await fn();
+    console.log(`✔ ${name}`);
+  } catch (e) {
+    failures++;
+    console.log(`✖ ${name}\n  ${e.message.split('\n').join('\n  ')}`);
+  }
+}
+
+// ---- 1. Lambda unit tests ----
+await step('lambda: zip validation, content types, warnings', () => {
+  const r = spawnSync(python, [join(here, 'test_lambda.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+// ---- 2. CloudFront router function (extracted from template.yaml) ----
+function loadRouter(rootDomain) {
+  const template = readFileSync(join(root, 'template.yaml'), 'utf8').replace(/\r\n/g, '\n');
+  const body = template.split('FunctionCode: !Sub |\n')[1].split('\n  Distribution:')[0];
+  const code = body.split('\n').map((l) => l.slice(8)).join('\n').replace('${RootDomain}', rootDomain);
+  return new Function(`${code}\nreturn handler;`)();
+}
+const route = (handler, host, uri) => {
+  const r = handler({ request: { uri, headers: { host: { value: host } } } });
+  return r.uri ?? `${r.statusCode}${r.headers ? ' ' + r.headers.location.value : ''}`;
+};
+
+await step('router: subdomain mode (RootDomain set)', () => {
+  const h = loadRouter('margdarshakss.com');
+  assert.equal(route(h, 'alice.margdarshakss.com', '/'), '/sites/alice/index.html');
+  assert.equal(route(h, 'alice.margdarshakss.com', '/cart/42'), '/sites/alice/index.html'); // SPA route
+  assert.equal(route(h, 'alice.margdarshakss.com', '/assets/x.css'), '/sites/alice/assets/x.css');
+  assert.equal(route(h, 'a.b.margdarshakss.com', '/'), '404');
+  assert.equal(route(h, 'Bad_Name.margdarshakss.com', '/'), '404');
+  assert.equal(route(h, 'd123.cloudfront.net', '/alice/'), '/sites/alice/index.html'); // path mode still works
+});
+await step('router: path mode (RootDomain empty)', () => {
+  const h = loadRouter('');
+  assert.equal(route(h, 'd.cloudfront.net', '/alice/'), '/sites/alice/index.html');
+  assert.equal(route(h, 'd.cloudfront.net', '/alice'), '302 /alice/');
+  assert.equal(route(h, 'd.cloudfront.net', '/alice/assets/a.js'), '/sites/alice/assets/a.js');
+  assert.equal(route(h, 'd.cloudfront.net', '/'), '404');
+});
+
+// ---- 3. End to end: real deploy.mjs -> real Lambda code -> fake AWS ----
+const server = spawn(python, [join(here, 'fake_api.py'), join(root, 'lambda'), String(PORT), 'margdarshakss.com'], { stdio: 'inherit' });
+const state = async () => (await fetch(`http://127.0.0.1:${PORT}/`)).json();
+for (let i = 0; i < 50; i++) {
+  if (await fetch(`http://127.0.0.1:${PORT}/`).then(() => true, () => false)) break;
+  await new Promise((r) => setTimeout(r, 200));
+}
+
+const site = mkdtempSync(join(tmpdir(), 'student-site-'));
+const deploy = (key = 'alice.s3cret') =>
+  spawnSync('node', [join(root, 'student', 'deploy.mjs'), '--skip-build'], {
+    cwd: site, encoding: 'utf8', env: { ...process.env, DEPLOY_API_URL: `http://127.0.0.1:${PORT}`, DEPLOY_KEY: key },
+  });
+
+try {
+  mkdirSync(join(site, 'dist', 'assets'), { recursive: true });
+  writeFileSync(join(site, 'dist', 'index.html'), '<script src="/assets/app.js"></script>');
+  writeFileSync(join(site, 'dist', 'assets', 'app.js'), 'console.log(1)');
+  writeFileSync(join(site, 'dist', 'assets', 'old.css'), 'body{}');
+
+  await step('e2e: first deploy publishes all files with correct headers', async () => {
+    const r = deploy();
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.match(r.stdout, /https:\/\/alice\.margdarshakss\.com\//);
+    const { objects, invalidations } = await state();
+    assert.deepEqual(Object.keys(objects).sort(), ['sites/alice/assets/app.js', 'sites/alice/assets/old.css', 'sites/alice/index.html']);
+    assert.match(objects['sites/alice/index.html'].CacheControl, /max-age=0/);
+    assert.equal(objects['sites/alice/assets/app.js'].ContentType, 'text/javascript; charset=utf-8');
+    assert.deepEqual(invalidations.at(-1), ['/sites/alice/*', '/alice/*']);
+  });
+
+  await step('e2e: redeploy removes files that disappeared from the build', async () => {
+    rmSync(join(site, 'dist', 'assets', 'old.css'));
+    const r = deploy();
+    assert.equal(r.status, 0, r.stdout + r.stderr);
+    assert.ok(!('sites/alice/assets/old.css' in (await state()).objects));
+  });
+
+  await step('e2e: wrong key is rejected and changes nothing', async () => {
+    const before = JSON.stringify(await state());
+    const r = deploy('alice.wrong');
+    assert.notEqual(r.status, 0);
+    assert.match(r.stderr, /Invalid or missing x-deploy-key/);
+    assert.equal(JSON.stringify(await state()), before);
+  });
+
+  await step('e2e: key of an unknown student is rejected', () => {
+    const r = deploy('mallory.s3cret');
+    assert.notEqual(r.status, 0);
+  });
+} finally {
+  server.kill();
+  rmSync(site, { recursive: true, force: true });
+}
+
+console.log(failures ? `\n${failures} step(s) FAILED` : '\nAll local tests passed');
+process.exit(failures ? 1 : 0);

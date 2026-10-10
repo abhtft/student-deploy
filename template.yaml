@@ -1,0 +1,245 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Student frontend hosting - one private S3 bucket, one CloudFront distribution
+  and a tiny upload API. Students deploy with `node deploy.mjs` and a personal key.
+
+Parameters:
+  RootDomain:
+    Type: String
+    Default: ''
+    Description: >
+      Optional, e.g. apps.example.com. Sites are then served at https://<student>.apps.example.com
+      (students change nothing in their code). Leave empty to serve at
+      https://<distribution>.cloudfront.net/<student>/ instead.
+  CertificateArn:
+    Type: String
+    Default: ''
+    Description: Required when RootDomain is set. ACM certificate in us-east-1 covering *.<RootDomain>.
+  KeysParameterName:
+    Type: String
+    Default: /student-deploy/keys
+    AllowedPattern: '^/[a-zA-Z0-9_./-]+$'
+    Description: 'SSM parameter holding the student -> secret JSON map. Must start with "/".'
+
+Rules:
+  CertificateRequiredForDomain:
+    RuleCondition: !Not [!Equals [!Ref RootDomain, '']]
+    Assertions:
+      - Assert: !Not [!Equals [!Ref CertificateArn, '']]
+        AssertDescription: CertificateArn (us-east-1, covering *.RootDomain) is required when RootDomain is set.
+
+Conditions:
+  UseCustomDomain: !Not [!Equals [!Ref RootDomain, '']]
+
+Resources:
+  # ---------- Storage ----------
+  SitesBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      LifecycleConfiguration:
+        Rules:
+          - Id: ExpireUploadedZips
+            Prefix: uploads/
+            Status: Enabled
+            ExpirationInDays: 1
+
+  SitesBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref SitesBucket
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: CloudFrontReadsPublishedSitesOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${SitesBucket.Arn}/sites/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  # Edit this map in the SSM console (or with admin.mjs). CloudFormation only sets the initial "{}".
+  StudentKeys:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Ref KeysParameterName
+      Type: String
+      Value: '{}'
+
+  # ---------- CDN ----------
+  SitesOAC:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub '${AWS::StackName}-oac'
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # Maps alice.<RootDomain>/cart or <dist>.cloudfront.net/alice/cart to s3://bucket/sites/alice/...
+  RouterFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub '${AWS::StackName}-router'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Route each student host/path to sites/<student>/ with SPA fallback
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        var ROOT_DOMAIN = '${RootDomain}'.toLowerCase();
+        var NAME = /^[a-z0-9][a-z0-9-]{0,29}$/;
+
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host ? request.headers.host.value.toLowerCase() : '';
+          var student;
+          var rest;
+
+          if (ROOT_DOMAIN && host.endsWith('.' + ROOT_DOMAIN)) {
+            // alice.apps.example.com/cart -> sites/alice/cart
+            student = host.slice(0, host.length - ROOT_DOMAIN.length - 1);
+            rest = request.uri;
+          } else {
+            // dxxxx.cloudfront.net/alice/cart -> sites/alice/cart
+            var slash = request.uri.indexOf('/', 1);
+            if (slash === -1) {
+              student = request.uri.slice(1);
+              if (!NAME.test(student)) return notFound();
+              return {
+                statusCode: 302,
+                statusDescription: 'Found',
+                headers: { location: { value: '/' + student + '/' } }
+              };
+            }
+            student = request.uri.slice(1, slash);
+            rest = request.uri.slice(slash);
+          }
+
+          if (!NAME.test(student)) return notFound();
+
+          // SPA fallback: a last path segment without a file extension is a client-side route.
+          var last = rest.slice(rest.lastIndexOf('/') + 1);
+          if (last.indexOf('.') === -1) rest = '/index.html';
+
+          request.uri = '/sites/' + student + rest;
+          return request;
+        }
+
+        function notFound() {
+          return { statusCode: 404, statusDescription: 'Not Found' };
+        }
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: !Sub 'Student frontends (${AWS::StackName})'
+        HttpVersion: http2and3
+        PriceClass: PriceClass_200
+        Aliases: !If
+          - UseCustomDomain
+          - [!Sub '*.${RootDomain}']
+          - !Ref AWS::NoValue
+        ViewerCertificate: !If
+          - UseCustomDomain
+          - AcmCertificateArn: !Ref CertificateArn
+            SslSupportMethod: sni-only
+            MinimumProtocolVersion: TLSv1.2_2021
+          - CloudFrontDefaultCertificate: true
+        Origins:
+          - Id: sites
+            DomainName: !GetAtt SitesBucket.RegionalDomainName
+            OriginAccessControlId: !GetAtt SitesOAC.Id
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: sites
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6 # Managed-CachingOptimized
+          FunctionAssociations:
+            - EventType: viewer-request
+              FunctionARN: !GetAtt RouterFunction.FunctionMetadata.FunctionARN
+
+  # ---------- Upload API ----------
+  DeployApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 5
+
+  DeployFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda/
+      Handler: app.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 1024
+      Timeout: 29 # HTTP API waits at most 30s
+      Environment:
+        Variables:
+          BUCKET: !Ref SitesBucket
+          DISTRIBUTION_ID: !Ref Distribution
+          DISTRIBUTION_DOMAIN: !GetAtt Distribution.DomainName
+          ROOT_DOMAIN: !Ref RootDomain
+          KEYS_PARAM: !Ref KeysParameterName
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource: !Sub '${SitesBucket.Arn}/*'
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt SitesBucket.Arn
+            - Effect: Allow
+              Action: cloudfront:CreateInvalidation
+              Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub 'arn:${AWS::Partition}:ssm:${AWS::Region}:${AWS::AccountId}:parameter${KeysParameterName}'
+      Events:
+        UploadUrl:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DeployApi
+            Path: /upload-url
+            Method: POST
+        Publish:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref DeployApi
+            Path: /publish
+            Method: POST
+
+Outputs:
+  DeployApiUrl:
+    Description: Paste into API_URL in student/deploy.mjs
+    Value: !Sub 'https://${DeployApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  SiteUrlPattern:
+    Description: Where student sites are served
+    Value: !If
+      - UseCustomDomain
+      - !Sub 'https://<student>.${RootDomain}/'
+      - !Sub 'https://${Distribution.DomainName}/<student>/'
+  DistributionDomain:
+    Description: Point the wildcard DNS record (*.RootDomain) here as a CNAME
+    Value: !GetAtt Distribution.DomainName
+  DistributionId:
+    Value: !Ref Distribution
+  BucketName:
+    Value: !Ref SitesBucket
+  KeysParameterName:
+    Value: !Ref KeysParameterName
