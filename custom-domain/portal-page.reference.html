@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Student Deploy Portal</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --text: #1b1f27; --muted: #5d6675; --line: #dfe3ea;
+    --accent: #2457d6; --accent-text: #ffffff; --ok: #1a7f4b; --warn-bg: #fff4d6; --warn-text: #6b4a00;
+    --err-bg: #fde8e8; --err-text: #8a1c1c; --code-bg: #eef1f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #11141a; --card: #1a1f28; --text: #e8ebf1; --muted: #9aa4b5; --line: #2b3240;
+      --accent: #6b93ff; --accent-text: #0b1020; --ok: #4cc38a; --warn-bg: #3a2f10; --warn-text: #f3d58b;
+      --err-bg: #3b1818; --err-text: #f4a9a9; --code-bg: #232a36;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 640px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 1.4rem; margin: 0 0 4px; }
+  h2 { font-size: 1.05rem; margin: 0 0 12px; }
+  p { margin: 0 0 12px; }
+  .muted { color: var(--muted); font-size: .92rem; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 20px; margin-top: 16px; }
+  label { display: block; font-weight: 600; margin-bottom: 6px; }
+  input[type=text], input[type=password] {
+    width: 100%; padding: 10px 12px; font: inherit; color: var(--text); background: var(--bg);
+    border: 1px solid var(--line); border-radius: 8px;
+  }
+  input:disabled { opacity: .55; cursor: not-allowed; }
+  input:focus-visible, button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  .row input { flex: 1 1 220px; width: auto; }
+  button {
+    font: inherit; font-weight: 600; padding: 10px 16px; border-radius: 8px; border: 1px solid var(--accent);
+    background: var(--accent); color: var(--accent-text); cursor: pointer;
+  }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .notice { padding: 10px 12px; border-radius: 8px; margin-top: 12px; font-size: .95rem; }
+  .notice.warn { background: var(--warn-bg); color: var(--warn-text); }
+  .notice.err { background: var(--err-bg); color: var(--err-text); }
+  .hidden { display: none !important; }
+  ol.steps { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+  ol.steps li { display: flex; gap: 10px; align-items: center; color: var(--muted); }
+  ol.steps li .dot { width: 22px; height: 22px; border-radius: 50%; border: 2px solid var(--line); display: grid; place-items: center; font-size: .75rem; flex: none; }
+  ol.steps li.done { color: var(--text); }
+  ol.steps li.done .dot { background: var(--ok); border-color: var(--ok); color: #fff; }
+  ol.steps li.current { color: var(--text); font-weight: 600; }
+  ol.steps li.current .dot { border-color: var(--accent); }
+  table.dns { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: .92rem; }
+  table.dns th, table.dns td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); word-break: break-all; }
+  code { background: var(--code-bg); padding: 1px 6px; border-radius: 4px; font-size: .9em; }
+  .top { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Student Deploy Portal</h1>
+  <p class="muted">Manage your site settings. Deploy your code with <code>node deploy.mjs</code>.</p>
+
+  <section id="login" class="card">
+    <h2>Sign in</h2>
+    <label for="key">Your deploy key</label>
+    <input id="key" type="password" autocomplete="off" placeholder="yourname.xxxxxxxxxxxx">
+    <div class="row"><button id="signin">Sign in</button></div>
+    <div id="login-error" class="notice err hidden" role="alert"></div>
+  </section>
+
+  <section id="dash" class="hidden">
+    <div class="card">
+      <div class="top">
+        <h2 id="who"></h2>
+        <button id="signout" class="secondary">Sign out</button>
+      </div>
+      <p>Your site: <a id="site" target="_blank" rel="noopener"></a></p>
+    </div>
+
+    <div class="card" id="domain-card">
+      <h2>Custom domain</h2>
+
+      <div id="off" class="hidden">
+        <label for="domain-off">Your domain</label>
+        <input id="domain-off" type="text" disabled placeholder="www.example.com">
+        <div class="notice warn" role="status">Owner not enabled for you. Please contact site owner.</div>
+      </div>
+
+      <div id="form" class="hidden">
+        <label for="domain">Your domain</label>
+        <input id="domain" type="text" placeholder="www.example.com" autocomplete="off" spellcheck="false">
+        <p class="muted" style="margin-top:6px">Use a subdomain such as <code>www.yourname.com</code> or <code>app.yourname.com</code>.</p>
+        <div class="row"><button id="save">Save</button></div>
+      </div>
+
+      <div id="progress" class="hidden">
+        <p>Domain: <strong id="p-domain"></strong></p>
+        <ol class="steps" id="steps">
+          <li data-n="1"><span class="dot">1</span>Add the DNS record</li>
+          <li data-n="2"><span class="dot">2</span>HTTPS certificate</li>
+          <li data-n="3"><span class="dot">3</span>Finishing setup</li>
+          <li data-n="4"><span class="dot">4</span>Live</li>
+        </ol>
+        <p id="p-message" class="muted"></p>
+        <div id="dns-help">
+          <p>At your domain's DNS provider, add this record:</p>
+          <table class="dns">
+            <tr><th>Type</th><th>Name</th><th>Target</th></tr>
+            <tr><td>CNAME</td><td id="dns-name"></td><td id="dns-target"></td></tr>
+          </table>
+          <p class="muted">On Cloudflare, set the record to <strong>DNS only</strong> (grey cloud). This page updates by itself.</p>
+        </div>
+        <div class="row">
+          <a id="live-link" class="hidden" target="_blank" rel="noopener">Open your site</a>
+          <button id="remove" class="secondary">Remove domain</button>
+        </div>
+      </div>
+
+      <div id="domain-error" class="notice err hidden" role="alert"></div>
+    </div>
+  </section>
+</main>
+
+<script>
+  // Set by the teacher when the portal is published; ?api=... overrides it for testing.
+  var API_URL = new URLSearchParams(location.search).get('api') || 'https://aiuvuzpm88.execute-api.us-east-1.amazonaws.com';
+  var STORE = 'deployKey';
+  var timer = null;
+  var $ = function (id) { return document.getElementById(id); };
+
+  function getKey() { try { return sessionStorage.getItem(STORE) || ''; } catch (e) { return ''; } }
+  function setKey(v) { try { v ? sessionStorage.setItem(STORE, v) : sessionStorage.removeItem(STORE); } catch (e) {} }
+
+  async function api(method, path, body) {
+    var res = await fetch(API_URL + path, {
+      method: method,
+      headers: Object.assign({ 'x-deploy-key': getKey() }, body ? { 'content-type': 'application/json' } : {}),
+      body: body ? JSON.stringify(body) : undefined
+    });
+    var data = {};
+    try { data = await res.json(); } catch (e) {}
+    if (!res.ok) { var err = new Error(data.error || ('Request failed (' + res.status + ')')); err.status = res.status; throw err; }
+    return data;
+  }
+
+  function show(id, on) { $(id).classList.toggle('hidden', !on); }
+  function showError(id, msg) { $(id).textContent = msg || ''; show(id, !!msg); }
+
+  var ORDER = { waiting_dns: 1, issuing_certificate: 2, finishing: 3, live: 4, removing: 0 };
+
+  function render(me) {
+    var c = me.customDomain;
+    $('who').textContent = me.name;
+    $('site').textContent = me.siteUrl;
+    $('site').href = me.siteUrl;
+    showError('domain-error', '');
+
+    var hasDomain = !!c.domain && c.state !== 'none';
+    show('off', !hasDomain && !c.enabled);
+    show('form', !hasDomain && c.enabled);
+    show('progress', hasDomain);
+
+    clearTimeout(timer);
+    if (!hasDomain) return;
+
+    $('p-domain').textContent = c.domain;
+    $('p-message').textContent = c.message || '';
+    var current = ORDER[c.state] || 0;
+    document.querySelectorAll('#steps li').forEach(function (li) {
+      var n = Number(li.dataset.n);
+      li.className = n < current || c.state === 'live' ? 'done' : (n === current ? 'current' : '');
+      li.querySelector('.dot').textContent = li.className === 'done' ? '✓' : n;
+    });
+    var firstLabel = c.domain.split('.')[0];
+    $('dns-name').textContent = firstLabel;
+    $('dns-target').textContent = c.cnameTarget;
+    show('dns-help', c.state === 'waiting_dns' || c.state === 'issuing_certificate');
+    var live = c.state === 'live';
+    $('live-link').classList.toggle('hidden', !live);
+    if (live) { $('live-link').href = c.siteUrl; $('live-link').textContent = 'Open ' + c.siteUrl; }
+    if (!live) timer = setTimeout(poll, 8000);
+  }
+
+  async function poll() {
+    try {
+      var status = await api('GET', '/domain/status');
+      var me = await api('GET', '/me');
+      // /me only knows coarse state; prefer the fresh status from /domain/status.
+      me.customDomain = Object.assign({}, me.customDomain, status);
+      render(me);
+    } catch (e) { showError('domain-error', e.message); timer = setTimeout(poll, 15000); }
+  }
+
+  async function load() {
+    try {
+      var me = await api('GET', '/me');
+      show('login', false); show('dash', true);
+      render(me);
+      if (me.customDomain.domain) poll();
+    } catch (e) {
+      setKey('');
+      show('dash', false); show('login', true);
+      showError('login-error', e.status === 401 ? 'That key was not recognised. Check it and try again.' : e.message);
+    }
+  }
+
+  $('signin').onclick = function () {
+    var v = $('key').value.trim();
+    if (!v) return showError('login-error', 'Paste your deploy key first.');
+    setKey(v); $('key').value = ''; load();
+  };
+  $('key').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('signin').click(); });
+  $('signout').onclick = function () { setKey(''); clearTimeout(timer); show('dash', false); show('login', true); showError('login-error', ''); };
+
+  $('save').onclick = async function () {
+    var btn = $('save'); btn.disabled = true; showError('domain-error', '');
+    try {
+      await api('PUT', '/domain', { domain: $('domain').value });
+      await load();
+    } catch (e) { showError('domain-error', e.message); }
+    btn.disabled = false;
+  };
+  $('domain').addEventListener('keydown', function (e) { if (e.key === 'Enter') $('save').click(); });
+
+  $('remove').onclick = async function () {
+    if (!confirm('Remove this custom domain?')) return;
+    showError('domain-error', '');
+    try { await api('DELETE', '/domain'); await load(); } catch (e) { showError('domain-error', e.message); }
+  };
+
+  if (getKey()) load();
+</script>
+</body>
+</html>

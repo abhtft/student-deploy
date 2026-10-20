@@ -10,12 +10,14 @@ Teacher (password -> signed session, 8 h):
   GET  /api/admin/requests               pending regeneration requests
   POST /api/admin/tokens/{id}/approve    {days}      new duration counted from now; brings an offline site back
   POST /api/admin/tokens/{id}/deny       {reason?}
+  POST /api/admin/tokens/{id}/domain-access   {enabled}   switch custom domains on/off for a student
 
 Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/login                {token}
   GET  /api/student/me
   POST /api/student/regen-request        {note?}     only in the last WARN_DAYS before expiry, or after it
   POST /api/student/upload-url, /api/student/publish   deploy (handled in app.py)
+  PUT/DELETE /api/student/domain, GET /api/student/domain/status   custom domain (see domains.py)
 
 A token is active until expires_at, "expired" (read-only) for GRACE_DAYS, then "offline".
 Only a SHA-256 of each token is stored. Teacher and student sessions use different signing keys.
@@ -34,6 +36,7 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,29}$")
 GRACE_DAYS = int(os.environ.get("OFFLINE_GRACE_DAYS", "3"))
 WARN_DAYS = int(os.environ.get("WARN_DAYS", "3"))
 MAX_DAYS = 365
+ROOT_DOMAIN = os.environ.get("ROOT_DOMAIN", "")
 TEACHER_SESSION_SECONDS = 8 * 3600
 STUDENT_SESSION_SECONDS = 12 * 3600
 MAX_FAILED_LOGINS = 5
@@ -83,15 +86,17 @@ class DynamoStore:
                 return items
             kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
-    def update(self, pk, fields):
+    def update(self, pk, fields, remove=()):
         names = {f"#f{i}": k for i, k in enumerate(fields)}
         values = {f":v{i}": v for i, v in enumerate(fields.values())}
-        expr = "SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(fields)))
-        result = self.table.update_item(
-            Key={"pk": pk}, UpdateExpression=expr, ExpressionAttributeNames=names,
-            ExpressionAttributeValues=values, ConditionExpression="attribute_exists(pk)", ReturnValues="ALL_NEW",
-        )
-        return _plain(result["Attributes"])
+        names.update({f"#r{i}": k for i, k in enumerate(remove)})
+        expr = ("SET " + ", ".join(f"#f{i} = :v{i}" for i in range(len(fields))) if fields else "") + \
+               (" REMOVE " + ", ".join(f"#r{i}" for i in range(len(remove))) if remove else "")
+        args = dict(Key={"pk": pk}, UpdateExpression=expr.strip(), ExpressionAttributeNames=names,
+                    ConditionExpression="attribute_exists(pk)", ReturnValues="ALL_NEW")
+        if values:
+            args["ExpressionAttributeValues"] = values
+        return _plain(self.table.update_item(**args)["Attributes"])
 
 
 class MemoryStore:
@@ -115,8 +120,10 @@ class MemoryStore:
     def list_prefix(self, prefix):
         return [self.get(pk) for pk in sorted(self.items) if pk.startswith(prefix)]
 
-    def update(self, pk, fields):
+    def update(self, pk, fields, remove=()):
         self.items[pk].update(json.loads(json.dumps(fields)))
+        for key in remove:
+            self.items[pk].pop(key, None)
         return self.get(pk)
 
 
@@ -136,8 +143,8 @@ _store = None
 # Names already used by CLI students (their folders share sites/<name>/). app.py plugs in the real lookup.
 legacy_names = lambda: set()  # noqa: E731
 # Brings archive/<slug>/ back to sites/<slug>/ (set by app.py).
-restore_site = lambda slug: None  # noqa: E731
-archive_site = lambda slug: None  # noqa: E731  (moves sites/<slug>/ to archive/<slug>/)
+restore_site = lambda slug, tenant_id=None: None  # noqa: E731
+archive_site = lambda slug, tenant_id=None: None  # noqa: E731  (moves sites/<slug>/ to archive/<slug>/)
 
 
 def db():
@@ -235,6 +242,26 @@ def view(item, now, site_url):
         "warn_at": item["expires_at"] - WARN_DAYS * DAY, "regen": regen, "archived": bool(item.get("archived")),
         "archived_at": item.get("archived_at"),
         "can_request_regen": status != "revoked" and (status == "offline" or now >= item["expires_at"] - WARN_DAYS * DAY) and regen["state"] != "pending",
+        "custom_domain": domain_view(item),
+    }
+
+
+DOMAIN_MESSAGES = {
+    "waiting_dns": "Waiting for your DNS record. Add the CNAME shown below; this page continues on its own.",
+    "issuing_certificate": "DNS found. Issuing your HTTPS certificate (usually 1-5 minutes).",
+    "finishing": "Certificate ready. Finishing setup (usually 1-5 minutes).",
+    "live": "Your custom domain is live.",
+    "removing": "Removing your custom domain...",
+}
+
+
+def domain_view(item):
+    domain = item.get("domain", "")
+    state = ("removing" if item.get("domain_removing") else item.get("domain_state") or "waiting_dns") if domain else "none"
+    return {
+        "available": bool(os.environ.get("TENANT_DISTRIBUTION_ID")), "enabled": bool(item.get("domain_enabled")),
+        "domain": domain, "state": state, "message": DOMAIN_MESSAGES.get(state, ""),
+        "cname_target": os.environ.get("ROUTING_ENDPOINT", ""), "site_url": f"https://{domain}/" if domain else "",
     }
 
 
@@ -305,7 +332,7 @@ def handle(event, site_url, now=None):
     method = event["requestContext"]["http"]["method"]
     path = event["rawPath"].rstrip("/")
     try:
-        body = parse_body(event) if method == "POST" else {}
+        body = parse_body(event) if method in ("POST", "PUT") else {}
         return dispatch(method, path, body, event, now, site_url)
     except PortalError as e:
         return reply(e.status, error=str(e))
@@ -320,6 +347,18 @@ def dispatch(method, path, body, event, now, site_url):
         return regen_request(student_token(event, now), body, now, site_url)
     if (method, path) == ("GET", "/api/student/me"):
         return reply(200, token=view(student_token(event, now), now, site_url))
+    if path in ("/api/student/domain", "/api/student/domain/status") and method in ("PUT", "DELETE", "GET"):
+        import domains
+        item = student_token(event, now)
+        if (method, path) == ("PUT", "/api/student/domain"):
+            item = domains.set_domain(item, body, now)
+        elif (method, path) == ("DELETE", "/api/student/domain"):
+            item = domains.remove_domain(item)
+        elif (method, path) == ("GET", "/api/student/domain/status"):
+            item = domains.advance(item)
+        else:
+            return reply(404, error="Unknown route.")
+        return reply(200, token=view(item, now, site_url))
 
     if path.startswith("/api/admin/"):
         verify_session("teacher", event, now)
@@ -332,6 +371,11 @@ def dispatch(method, path, body, event, now, site_url):
             pending = [i for i in db().list_prefix("tok#") if (i.get("regen") or {}).get("state") == "pending" and not i.get("revoked")]
             pending.sort(key=lambda i: i["regen"]["requested_at"])
             return reply(200, requests=[view(i, now, site_url) for i in pending])
+        access = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/domain-access", path)
+        if method == "POST" and access:
+            import domains
+            item = domains.set_access(get_token(access.group(1)), body.get("enabled"))
+            return reply(200, token=view(item, now, site_url))
         match = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/(revoke|extend|offline|approve|deny)", path)
         if method == "POST" and match:
             return token_action(get_token(match.group(1)), match.group(2), body, now, site_url)
@@ -402,7 +446,7 @@ def student_token(event, now):
 def reactivate(item, expires_at, fields):
     """Set a new expiry; if the site was already taken offline, bring it back first."""
     if item.get("archived"):
-        restore_site(item["slug"])
+        restore_site(item["slug"], tenant_id=item.get("tenant_id"))
         fields = {**fields, "archived": False}
     return db().update(item["pk"], {**fields, "expires_at": expires_at})
 
@@ -410,7 +454,7 @@ def reactivate(item, expires_at, fields):
 def take_offline(item, now):
     """Archive the site (idempotent: safe to repeat if an earlier run died halfway)."""
     if not item.get("archived"):
-        archive_site(item["slug"])
+        archive_site(item["slug"], tenant_id=item.get("tenant_id"))
     return db().update(item["pk"], {"archived": True, "archived_at": item.get("archived_at") or now})
 
 
@@ -426,7 +470,12 @@ def sweep(now=None):
             done.append(item["slug"])
         except Exception as e:  # one bad site must not stop the rest; it is retried tomorrow
             failed.append(f"{item['slug']}: {e}")
-    return {"archived": done, "failed": failed}
+    removed = []
+    if os.environ.get("TENANT_DISTRIBUTION_ID"):
+        import domains
+        removed, failed_removals = domains.finish_pending_removals()
+        failed += failed_removals
+    return {"archived": done, "failed": failed, "domains_removed": removed}
 
 
 def token_action(item, action, body, now, site_url):

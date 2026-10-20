@@ -34,6 +34,16 @@ Parameters:
     Default: /student-deploy/teacher
     AllowedPattern: '^/[a-zA-Z0-9_./-]+$'
     Description: 'SSM parameter holding the teacher login (set with `node admin.mjs teacher-setup`).'
+  TenantDistributionId:
+    Type: String
+    Default: ''
+    Description: >
+      Optional. Id of the CloudFront multi-tenant distribution used for student custom domains (created by hand, see
+      custom-domain/HANDOFF.md). Leave empty to switch the custom-domain feature off.
+  RoutingEndpoint:
+    Type: String
+    Default: ''
+    Description: Routing endpoint of the tenant connection group (xxxx.cloudfront.net). Students point their CNAME here.
   OfflineGraceDays:
     Type: Number
     Default: 3
@@ -63,6 +73,8 @@ Globals:
         TOKENS_TABLE: !Ref TokensTable
         TEACHER_PARAM: !Ref TeacherParameterName
         OFFLINE_GRACE_DAYS: !Ref OfflineGraceDays
+        TENANT_DISTRIBUTION_ID: !Ref TenantDistributionId
+        ROUTING_ENDPOINT: !Ref RoutingEndpoint
         ORIGIN_SECRET: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
 
 Resources:
@@ -108,6 +120,17 @@ Resources:
             Condition:
               StringEquals:
                 AWS:SourceArn: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+          - Sid: CustomDomainTenantsReadPublishedSitesOnly
+            Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${SitesBucket.Arn}/sites/*'
+            Condition:
+              StringLike:
+                AWS:SourceArn:
+                  - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TenantDistributionId}'
+                  - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution-tenant/*'
           - Sid: PortalCloudFrontReadsPortalFolderOnly
             Effect: Allow
             Principal:
@@ -367,6 +390,21 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Scan]
               Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow # student custom domains (CloudFront multi-tenant)
+              Action:
+                - cloudfront:CreateDistributionTenant
+                - cloudfront:GetDistributionTenant
+                - cloudfront:UpdateDistributionTenant
+                - cloudfront:DeleteDistributionTenant
+                - cloudfront:GetManagedCertificateDetails
+                - cloudfront:CreateInvalidationForDistributionTenant
+                - cloudfront:CreateInvalidation
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TenantDistributionId}'
+                - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution-tenant/*'
+            - Effect: Allow
+              Action: [acm:RequestCertificate, acm:DescribeCertificate, acm:ListCertificates, acm:AddTagsToCertificate]
+              Resource: '*'
       Events:
         UploadUrl:
           Type: HttpApi
@@ -409,8 +447,16 @@ Resources:
               Action: cloudfront:CreateInvalidation
               Resource: !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
             - Effect: Allow
-              Action: [dynamodb:UpdateItem, dynamodb:Scan]
+              Action: [dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Scan]
               Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow
+              Action:
+                - cloudfront:GetDistributionTenant
+                - cloudfront:DeleteDistributionTenant
+                - cloudfront:CreateInvalidationForDistributionTenant
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${TenantDistributionId}'
+                - !Sub 'arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution-tenant/*'
       Events:
         Daily:
           Type: Schedule

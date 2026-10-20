@@ -39,6 +39,11 @@ await step('portal deploy: session-bound upload/publish, expiry, revoke', () => 
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('custom domains: switch, setup states, removal, cache invalidation, sweeper', () => {
+  const r = spawnSync(python, [join(here, 'test_domains.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

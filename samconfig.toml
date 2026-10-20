@@ -7,4 +7,4 @@ region = "us-east-1"
 resolve_s3 = true
 capabilities = "CAPABILITY_IAM"
 confirm_changeset = true
-parameter_overrides = "PortalAlias=\"true\" RootDomain=\"margdarshakss.com\" CertificateArn=\"arn:aws:acm:us-east-1:417780655868:certificate/6a5e2ee0-71cd-4d9b-9b5c-7d43b675d9bb\""
+parameter_overrides = "TenantDistributionId=\"E1NTIC3LHBW49Q\" RoutingEndpoint=\"d4cls3ve04vi3.cloudfront.net\" PortalAlias=\"true\" RootDomain=\"margdarshakss.com\" CertificateArn=\"arn:aws:acm:us-east-1:417780655868:certificate/6a5e2ee0-71cd-4d9b-9b5c-7d43b675d9bb\""

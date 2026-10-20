@@ -99,7 +99,7 @@ def portal_deploy(portal, event, publish_now):
             raise portal.PortalError(403, "Your token has expired, so you can't deploy. Request regeneration from your dashboard.")
         if not publish_now:
             return upload_url(item["slug"])
-        result = publish(item["slug"])
+        result = publish(item["slug"], tenant_id=item.get("tenant_id"))
         if result["statusCode"] == 200:
             portal.db().update(item["pk"], {"last_deploy_at": now})
         return result
@@ -138,7 +138,7 @@ def upload_url(name):
     return reply(200, uploadUrl=url, maxBytes=MAX_ZIP_BYTES)
 
 
-def publish(name):
+def publish(name, tenant_id=None):
     zip_key = f"uploads/{name}.zip"
     try:
         size = s3.head_object(Bucket=BUCKET, Key=zip_key)["ContentLength"]
@@ -167,7 +167,7 @@ def publish(name):
     stale = [key for key in list_keys(prefix) if key[len(prefix):] not in entries]
     delete_keys(stale)
 
-    invalidate(name)
+    invalidate(name, tenant_id)
     s3.delete_object(Bucket=BUCKET, Key=zip_key)
 
     result = {"url": site_url(name), "files": len(entries), "removed": len(stale)}
@@ -177,13 +177,23 @@ def publish(name):
     return reply(200, **result)
 
 
-def invalidate(name):
+def invalidate(name, tenant_id=None):
     # Cache entries are keyed by the rewritten URI (/sites/<name>/...); /<name>/* covers the viewer path in path mode.
     paths = [f"/sites/{name}/*", f"/{name}/*"]
     cloudfront.create_invalidation(
         DistributionId=DISTRIBUTION_ID,
         InvalidationBatch={"Paths": {"Quantity": len(paths), "Items": paths}, "CallerReference": f"{name}-{time.time_ns()}"},
     )
+    if tenant_id:
+        # The student's custom domain is a separate CloudFront tenant with its own cache (objects live up to a year).
+        # A failure here must not fail the deploy: the site is already published on the main address.
+        try:
+            cloudfront.create_invalidation_for_distribution_tenant(
+                Id=tenant_id,
+                InvalidationBatch={"Paths": {"Quantity": 1, "Items": ["/*"]}, "CallerReference": f"{name}-{time.time_ns()}"},
+            )
+        except Exception as e:
+            print(f"custom-domain cache invalidation failed for {name}: {e}")
 
 
 def delete_keys(keys):
@@ -191,17 +201,17 @@ def delete_keys(keys):
         s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True})
 
 
-def restore_site(name):
+def restore_site(name, tenant_id=None):
     """Move a site taken offline (archive/<name>/) back to sites/<name>/."""
     src, dst = f"archive/{name}/", f"sites/{name}/"
     keys = list_keys(src)
     for key in keys:
         s3.copy_object(Bucket=BUCKET, Key=dst + key[len(src):], CopySource={"Bucket": BUCKET, "Key": key})
     delete_keys(keys)
-    invalidate(name)
+    invalidate(name, tenant_id)
 
 
-def archive_site(name):
+def archive_site(name, tenant_id=None):
     """Take a site offline by moving sites/<name>/ to archive/<name>/ (CloudFront only serves sites/*)."""
     src, dst = f"sites/{name}/", f"archive/{name}/"
     keys = list_keys(src)
@@ -209,7 +219,7 @@ def archive_site(name):
         s3.copy_object(Bucket=BUCKET, Key=dst + key[len(src):], CopySource={"Bucket": BUCKET, "Key": key})
     delete_keys([k for k in list_keys(dst) if src + k[len(dst):] not in keys])  # leftovers of an older archive
     delete_keys(keys)
-    invalidate(name)
+    invalidate(name, tenant_id)
 
 
 def sweep(event, context):
