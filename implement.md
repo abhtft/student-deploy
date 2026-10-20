@@ -1,6 +1,6 @@
 # Implementation guide: test, deploy and onboard (margdarshakss.com)
 
-Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
+This guide has two parts: Part 1 (below) sets up the hosting and the CLI flow; [Part 2](#part-2-web-portal-at-deploymargdarshakss-com) adds the web portal. Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
 Total time: about 45 minutes, most of it waiting for CloudFront and DNS.
 
 Commands use `curl.exe` (not `curl`) so they work in both PowerShell and Git Bash. Run everything from this folder unless told otherwise:
@@ -387,7 +387,7 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 | Blank page + CORS error in console | Backend doesn't allow the origin. Fix backend CORS (see 9c) |
 | Page works but API calls fail | `VITE_API_URL` missing at **build** time (it's baked in during `npm run build`), or the backend is `http://` (mixed content blocked) |
 | Voice input says it requires HTTPS | Student opened the site over `http://`. CloudFront redirects automatically, so use the `https://` link |
-| `curl` of the API shows `{"message":"Too Many Requests"}` | Throttle (5 req/s, burst 20). Raise `ThrottlingRateLimit` in `template.yaml` and redeploy |
+| `curl` of the API shows `{"message":"Too Many Requests"}` | Throttle (20 req/s, burst 50). Raise `ThrottlingRateLimit` in `template.yaml` and redeploy |
 
 ## Final acceptance checklist
 
@@ -401,3 +401,134 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 - [ ] `smoketest` removed (Phase 8)
 - [ ] First real site (`shoplist`) deployed and talking to its backend
 - [ ] Students have their `deploy.mjs`, `README.md` and personal `DEPLOY_KEY`
+
+---
+
+# Part 2: Web portal at deploy.margdarshakss.com
+
+Teachers create expiring tokens in a web page; students sign in with a token and upload their build folder. The CLI flow above keeps working in parallel. The same `sam deploy` creates everything, so if you have not deployed yet, Phase 4 already includes the portal and you can skip step P2.
+
+How it fits together:
+
+```
+deploy.margdarshakss.com ─ CloudFront (PortalDistribution)
+   ├─ /*      → s3://BUCKET/portal/   (the pages in web/)
+   └─ /api/*  → API Gateway → Lambda → DynamoDB (tokens)
+Daily 03:00 UTC: SweeperFunction moves expired sites to s3://BUCKET/archive/<name>/
+```
+
+Token life: **active** until its expiry, then **expired** (read-only, site still online) for 3 days, then **offline** (site moved to `archive/`, restored if the teacher approves a regeneration or extends the token). Nothing is ever deleted automatically.
+
+## P1. Try it locally first (no AWS, 1 minute)
+
+```
+python tests/dev_server.py
+```
+
+Open `http://localhost:8777/`. Teacher login is `teacher` / `teacher-pass-123`; the student tokens for the five demo students are printed in the terminal. Everything is in memory and resets when you stop it.
+
+✅ **Pass check:** you can sign in as teacher, create a token, sign in as a student with it, and upload a folder.
+
+## P2. Update the stack
+
+```
+node tests/run.mjs
+sam deploy
+```
+
+The changeset should show **Add** rows for a DynamoDB table, a second CloudFront distribution and function, an SSM parameter (`TeacherAccount`), a sweeper Lambda with its schedule, and **Modify** rows for the bucket (CORS rule), the bucket policy, the API (new `/api/{proxy+}` route) and the existing Lambda (environment and permissions). Nothing should say *Remove* or *Replace*. CloudFront takes 3–8 minutes.
+
+Write down the new outputs:
+
+| Output | Used for |
+|---|---|
+| `PortalUrl` | The address you give people (`https://deploy.margdarshakss.com/`) |
+| `PortalDistributionDomain` | The DNS target in P5 and the smoke test in P4 |
+| `PortalDistributionId`, `TokensTableName` | Used by `admin.mjs` automatically |
+
+✅ **Pass check:** stack status is `UPDATE_COMPLETE`.
+
+## P3. Create the teacher login
+
+```
+node admin.mjs teacher-setup yourname
+```
+
+It asks for a password (at least 10 characters, typed hidden) and stores a salted hash in SSM. Run it again any time to change the password. Takes effect within a minute.
+
+> **Never edit the `TeacherAccount` resource in `template.yaml`.** A CloudFormation update to it would reset the login to empty (same rule as `StudentKeys`).
+
+## P4. Publish the pages and smoke-test the API
+
+```
+node admin.mjs portal-publish
+```
+
+Re-run this whenever you change anything in `web/`. Then check, using `PortalDistributionDomain` as `PDIST`:
+
+```
+curl.exe -s -o NUL -w "%{http_code} %{content_type}\n" https://PDIST/
+curl.exe -s -o NUL -w "%{http_code} %{content_type}\n" https://PDIST/teacher
+curl.exe -s -o NUL -w "%{http_code} %{content_type}\n" https://PDIST/common.js
+curl.exe -s -w "  %{http_code}\n" https://PDIST/api/admin/tokens
+curl.exe -s -o NUL -w "%{http_code}\n" https://BUCKET.s3.amazonaws.com/portal/index.html
+```
+
+(Git Bash: `/dev/null` instead of `NUL`.) Expected: `200 text/html`, `200 text/html`, `200 text/javascript`, `{"error":"Please sign in again."}  401`, and `403` (the bucket stays private).
+
+Open `https://PDIST/teacher` in a browser, sign in, and create a token. Teacher features work on this address. **Student uploads from the `cloudfront.net` address are blocked by the bucket's CORS rule on purpose**, so test uploads after P5.
+
+✅ **Pass check:** all of the above, and you can create a token.
+
+## P5. Point DNS at the portal
+
+At your DNS host add **one** record:
+
+| Type | Name / Host | Value / Target | TTL |
+|---|---|---|---|
+| `CNAME` | `deploy` | your `PortalDistributionDomain` | 300 |
+
+An explicit `deploy` record beats the `*` wildcard, so student sites and `bs` are unaffected. On Cloudflare use **DNS only** (grey cloud). If `sam deploy` failed with `CNAMEAlreadyExists` for `deploy.margdarshakss.com`, another distribution already claims that name; remove it there first.
+
+```
+nslookup deploy.margdarshakss.com
+curl.exe -sI https://deploy.margdarshakss.com/
+```
+
+✅ **Pass check:** `HTTP/2 200`, valid padlock, and `https://bs.margdarshakss.com` and a student site still load.
+
+## P6. Full walk-through (acceptance test)
+
+1. **Teacher:** open `https://deploy.margdarshakss.com/teacher`, sign in, click **New token**, valid 7 days, student name `Test One`. Copy the token.
+2. **Student:** open `/student` in a private window, paste the token. You should see `test-one.margdarshakss.com`, a green bar and "Nothing uploaded yet".
+3. **Upload:** drag in the `sample-site` folder. The checklist should be all green; click **Upload and publish**. Open the link: "It works 🎉".
+4. **Bad upload:** drag in a folder with a file called `my photo.png`. The button must stay disabled and name the file.
+5. **Warning and regeneration:** create a second token valid for **2 days** (inside the 3-day warning window). The student page shows the amber banner and a **Request regeneration** button. Send a request.
+6. **Approve:** the teacher page shows a badge on **Requests**. Approve with 30 days. The student page shows the new expiry.
+7. **Expiry:** click **Take offline** on the first token. `test-one.margdarshakss.com` stops loading (after about a minute), the files are in `archive/test-one/`, and **Extend** brings the site back.
+8. **Clean up:** **Revoke** the test tokens. Optionally `aws s3 rm s3://BUCKET/archive/test-one --recursive`.
+
+✅ **Pass check:** all eight steps behave as described.
+
+## Portal day-2 operations
+
+| Task | How |
+|---|---|
+| Create, extend, revoke, take offline, approve | The teacher page |
+| Update the pages | Edit `web/`, then `node admin.mjs portal-publish` |
+| Change the teacher password | `node admin.mjs teacher-setup yourname` |
+| See archived (offline) sites | `aws s3 ls s3://BUCKET/archive/`. They are never deleted automatically; remove one with `aws s3 rm s3://BUCKET/archive/NAME --recursive` |
+| Watch the daily sweep | `sam logs --stack-name student-hosting --name SweeperFunction` |
+| Change the 3-day grace period | `OfflineGraceDays` parameter, then `sam deploy` |
+| Look at the data | DynamoDB table `TokensTableName`. Only a hash of each token is stored, so lost tokens can't be recovered: create a new one |
+
+Portal troubleshooting:
+
+| Symptom | Likely cause and fix |
+|---|---|
+| Teacher page says "Teacher account is not set up yet" | Run P3 |
+| "Too many failed attempts" | Five wrong passwords from one address lock it for 15 minutes. Wait, or delete the `fail#<ip>` item in the DynamoDB table |
+| Student upload fails with a network error and a CORS message in the console | The page was opened on an address other than `https://deploy.margdarshakss.com`. Use the real address |
+| Pages show old content after `portal-publish` | Hard-refresh. `portal-publish` already invalidates the cache |
+| `/teacher` gives an XML error | Pages not published yet (P4), or the CloudFront function did not deploy. Open `/teacher.html` to tell them apart |
+| Site name "already taken" | Names are unique across portal tokens and CLI students. Pick another |

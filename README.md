@@ -24,6 +24,29 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | `student/deploy.yml` | Optional GitHub Action for students (auto-deploy on push) |
 | `student/README.md` | Student instructions |
 
+## Web portal (deploy.margdarshakss.com)
+
+Besides the CLI, there is a web portal with two sections, each with its own login:
+
+- **Teacher** (`/teacher`, username and password): create tokens with an expiry and an optional student name and site name, then share the token. Extend, revoke or take a site offline, and approve or deny **regeneration requests** from the inbox.
+- **Student** (`/student`, the token is the login): shows a validity bar, drag-and-drop for the build folder (or a `.zip`) with a checklist of the upload guidelines, and a **Request regeneration** button once the token is within 3 days of expiry.
+
+Token life: active until expiry, then 3 days read-only (the site stays online and the student can request regeneration), then the site goes **offline** (moved to `archive/`, never deleted). Approving a request or extending the token restores it.
+
+```
+deploy.margdarshakss.com ─ CloudFront ─┬─ /*     → S3 portal/ (the pages in web/)
+                                       └─ /api/* → API Gateway → Lambda → DynamoDB
+Daily: sweeper Lambda archives sites past expiry + grace
+```
+
+| File | What it is |
+|---|---|
+| `web/` | The portal pages (plain HTML/JS, no build step): `index`, `teacher`, `student`, `common.js`, `check.js`, `zip.js`, `shared.css` |
+| `lambda/portal.py` | Token, login and regeneration logic |
+| `tests/dev_server.py` | Runs the whole portal locally with demo data |
+
+Setup: `sam deploy`, then `node admin.mjs teacher-setup <name>`, `node admin.mjs portal-publish`, and a `deploy` CNAME at your DNS host. Step by step in [implement.md](implement.md), Part 2.
+
 ## One-time setup (about 20 min)
 
 Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 18+.
@@ -77,7 +100,7 @@ Send each student their `DEPLOY_KEY` line, plus `student/deploy.mjs` and `studen
 
 - 50 MB zip, 200 MB unzipped, 2,000 files, about 25 s publish time per deploy. A typical Vite app is 1–5 MB and publishes in 2–3 s.
 - The key map is one standard SSM parameter (4 KB), which holds about 100 students. `admin.mjs list` shows how much is used. For more students, switch the parameter to the Advanced tier in the console.
-- The API is throttled to 5 requests/s (burst 20) to protect against loops or abuse.
+- The API is throttled to 20 requests/s (burst 50) to protect against loops or abuse.
 - Each publish clears 2 cache paths, and the first 1,000 paths a month are free (about 500 deploys). A class typically costs **$0–1/month**.
 
 ## Security model (kept simple on purpose)
@@ -86,7 +109,8 @@ Send each student their `DEPLOY_KEY` line, plus `student/deploy.mjs` and `studen
 - The bucket is private. Only this CloudFront distribution can read it, and only `sites/*`.
 - The Lambda role can touch only this bucket, create cache invalidations on this distribution, and read the key parameter.
 - Keys are stored in plain text in SSM, which is fine for a class. Rotate a key with `remove` and then `add`.
-- **Do not change the `StudentKeys` resource in `template.yaml`.** If CloudFormation ever updates it, the key map resets to `{}`.
+- **Do not change the `StudentKeys` or `TeacherAccount` resources in `template.yaml`.** If CloudFormation ever updates one, it resets to `{}` (all CLI keys, or the teacher login).
+- Portal tokens are random 128-bit values and only their SHA-256 is stored. Teacher and student sessions use different signing keys, and a student session can only write to its own site folder.
 
 ## Backends
 

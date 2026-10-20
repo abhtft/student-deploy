@@ -1,0 +1,6 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "portal-dev", "runtimeExecutable": "python", "runtimeArgs": ["tests/dev_server.py", "8777"], "port": 8777 }
+  ]
+}

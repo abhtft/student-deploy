@@ -18,61 +18,13 @@ os.environ.update(
     ROOT_DOMAIN=sys.argv[3] if len(sys.argv) > 3 else "", KEYS_PARAM="/student-deploy/keys",
 )
 sys.path.insert(0, lambda_dir)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import app  # noqa: E402
-from botocore.exceptions import ClientError  # noqa: E402
 
-store, invalidations = {}, []
-
-
-class Body:
-    def __init__(self, data):
-        self.data = data
-
-    def read(self):
-        return self.data
+from fakes import FakeCloudFront, FakeS3, FakeSSM, invalidations, store  # noqa: E402
 
 
-class FakeS3:
-    def generate_presigned_url(self, op, Params, ExpiresIn):
-        return f"http://127.0.0.1:{port}/s3/{Params['Key']}"
-
-    def head_object(self, Bucket, Key):
-        if Key not in store:
-            raise ClientError({"Error": {"Code": "404"}}, "HeadObject")
-        return {"ContentLength": len(store[Key]["Body"])}
-
-    def get_object(self, Bucket, Key):
-        return {"Body": Body(store[Key]["Body"])}
-
-    def put_object(self, Bucket, Key, Body, **kw):
-        store[Key] = {"Body": Body, **kw}
-
-    def delete_object(self, Bucket, Key):
-        store.pop(Key, None)
-
-    def delete_objects(self, Bucket, Delete):
-        for o in Delete["Objects"]:
-            store.pop(o["Key"], None)
-
-    def get_paginator(self, name):
-        class Paginator:
-            def paginate(self, Bucket, Prefix):
-                yield {"Contents": [{"Key": k} for k in sorted(store) if k.startswith(Prefix)]}
-
-        return Paginator()
-
-
-class FakeSSM:
-    def get_parameter(self, Name):
-        return {"Parameter": {"Value": json.dumps({"alice": "s3cret"})}}
-
-
-class FakeCloudFront:
-    def create_invalidation(self, DistributionId, InvalidationBatch):
-        invalidations.append(InvalidationBatch["Paths"]["Items"])
-
-
-app.s3, app.ssm, app.cloudfront = FakeS3(), FakeSSM(), FakeCloudFront()
+app.s3, app.ssm, app.cloudfront = FakeS3(port), FakeSSM(), FakeCloudFront()
 
 
 class Handler(BaseHTTPRequestHandler):

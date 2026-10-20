@@ -29,6 +29,21 @@ await step('lambda: zip validation, content types, warnings', () => {
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('portal: tokens, teacher/student login, sessions, lifecycle', () => {
+  const r = spawnSync(python, [join(here, 'test_portal.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('portal deploy: session-bound upload/publish, expiry, revoke', () => {
+  const r = spawnSync(python, [join(here, 'test_portal_deploy.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
+  const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 // ---- 2. CloudFront router function (extracted from template.yaml) ----
 function loadRouter(rootDomain) {
   const template = readFileSync(join(root, 'template.yaml'), 'utf8').replace(/\r\n/g, '\n');
@@ -56,6 +71,23 @@ await step('router: path mode (RootDomain empty)', () => {
   assert.equal(route(h, 'd.cloudfront.net', '/alice'), '302 /alice/');
   assert.equal(route(h, 'd.cloudfront.net', '/alice/assets/a.js'), '/sites/alice/assets/a.js');
   assert.equal(route(h, 'd.cloudfront.net', '/'), '404');
+});
+
+// ---- 2b. Portal CloudFront function (clean URLs + viewer IP for the API) ----
+await step('portal function: clean URLs, API viewer IP', () => {
+  const template = readFileSync(join(root, 'template.yaml'), 'utf8').replaceAll('\r\n', '\n');
+  const body = template.split('FunctionCode: |\n')[1].split('\n\n  PortalDistribution:')[0];
+  const code = body.split('\n').map((l) => l.slice(8)).join('\n');
+  const handler = new Function(`${code}\nreturn handler;`)();
+  const run = (uri) => handler({ request: { uri, headers: {} }, viewer: { ip: '203.0.113.9' } }).uri;
+  assert.equal(run('/'), '/');
+  assert.equal(run('/teacher'), '/teacher.html');
+  assert.equal(run('/student/'), '/student.html');
+  assert.equal(run('/shared.css'), '/shared.css');
+  assert.equal(run('/common.js'), '/common.js');
+  const api = handler({ request: { uri: '/api/teacher/login', headers: { 'x-viewer-ip': { value: '6.6.6.6' } } }, viewer: { ip: '203.0.113.9' } });
+  assert.equal(api.uri, '/api/teacher/login');
+  assert.equal(api.headers['x-viewer-ip'].value, '203.0.113.9', 'a client-supplied value is overwritten');
 });
 
 // ---- 3. End to end: real deploy.mjs -> real Lambda code -> fake AWS ----

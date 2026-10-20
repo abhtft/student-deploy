@@ -66,6 +66,15 @@ class DeployError(Exception):
 
 
 def handler(event, context):
+    path = event.get("rawPath", "")
+    if path.startswith("/api/"):
+        import portal
+        portal.legacy_names = lambda: set(load_keys())
+        portal.restore_site, portal.archive_site = restore_site, archive_site
+        if path in ("/api/student/upload-url", "/api/student/publish") and event["requestContext"]["http"]["method"] == "POST":
+            return portal_deploy(portal, event, publish_now=path.endswith("/publish"))
+        return portal.handle(event, site_url)
+
     name = authenticate(event)
     if not name:
         return reply(401, error="Invalid or missing x-deploy-key. Ask your teacher for your deploy key.")
@@ -79,6 +88,25 @@ def handler(event, context):
     except DeployError as e:
         return reply(400, error=str(e))
     return reply(404, error=f"Unknown route {route}")
+
+
+def portal_deploy(portal, event, publish_now):
+    """Deploy for a web-portal student: the session decides the site folder, so a student can only touch their own."""
+    now = int(time.time())
+    try:
+        item = portal.student_token(event, now)
+        if portal.status_of(item, now) != "active":
+            raise portal.PortalError(403, "Your token has expired, so you can't deploy. Request regeneration from your dashboard.")
+        if not publish_now:
+            return upload_url(item["slug"])
+        result = publish(item["slug"])
+        if result["statusCode"] == 200:
+            portal.db().update(item["pk"], {"last_deploy_at": now})
+        return result
+    except portal.PortalError as e:
+        return reply(e.status, error=str(e))
+    except DeployError as e:
+        return reply(400, error=str(e))
 
 
 def authenticate(event):
@@ -137,15 +165,9 @@ def publish(name):
             future.result()
 
     stale = [key for key in list_keys(prefix) if key[len(prefix):] not in entries]
-    for i in range(0, len(stale), 1000):
-        s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in stale[i:i + 1000]], "Quiet": True})
+    delete_keys(stale)
 
-    # Cache entries are keyed by the rewritten URI (/sites/<name>/...); /<name>/* covers the viewer path in path mode.
-    paths = [f"/sites/{name}/*", f"/{name}/*"]
-    cloudfront.create_invalidation(
-        DistributionId=DISTRIBUTION_ID,
-        InvalidationBatch={"Paths": {"Quantity": len(paths), "Items": paths}, "CallerReference": f"{name}-{time.time_ns()}"},
-    )
+    invalidate(name)
     s3.delete_object(Bucket=BUCKET, Key=zip_key)
 
     result = {"url": site_url(name), "files": len(entries), "removed": len(stale)}
@@ -153,6 +175,51 @@ def publish(name):
     if warning:
         result["warning"] = warning
     return reply(200, **result)
+
+
+def invalidate(name):
+    # Cache entries are keyed by the rewritten URI (/sites/<name>/...); /<name>/* covers the viewer path in path mode.
+    paths = [f"/sites/{name}/*", f"/{name}/*"]
+    cloudfront.create_invalidation(
+        DistributionId=DISTRIBUTION_ID,
+        InvalidationBatch={"Paths": {"Quantity": len(paths), "Items": paths}, "CallerReference": f"{name}-{time.time_ns()}"},
+    )
+
+
+def delete_keys(keys):
+    for i in range(0, len(keys), 1000):
+        s3.delete_objects(Bucket=BUCKET, Delete={"Objects": [{"Key": k} for k in keys[i:i + 1000]], "Quiet": True})
+
+
+def restore_site(name):
+    """Move a site taken offline (archive/<name>/) back to sites/<name>/."""
+    src, dst = f"archive/{name}/", f"sites/{name}/"
+    keys = list_keys(src)
+    for key in keys:
+        s3.copy_object(Bucket=BUCKET, Key=dst + key[len(src):], CopySource={"Bucket": BUCKET, "Key": key})
+    delete_keys(keys)
+    invalidate(name)
+
+
+def archive_site(name):
+    """Take a site offline by moving sites/<name>/ to archive/<name>/ (CloudFront only serves sites/*)."""
+    src, dst = f"sites/{name}/", f"archive/{name}/"
+    keys = list_keys(src)
+    for key in keys:
+        s3.copy_object(Bucket=BUCKET, Key=dst + key[len(src):], CopySource={"Bucket": BUCKET, "Key": key})
+    delete_keys([k for k in list_keys(dst) if src + k[len(dst):] not in keys])  # leftovers of an older archive
+    delete_keys(keys)
+    invalidate(name)
+
+
+def sweep(event, context):
+    import portal
+    portal.archive_site = archive_site
+    result = portal.sweep()
+    print(json.dumps(result))
+    if result["failed"]:
+        raise RuntimeError(f"{len(result['failed'])} site(s) could not be archived: {result['failed']}")
+    return result
 
 
 def site_entries(archive):
