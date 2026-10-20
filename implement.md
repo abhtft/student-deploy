@@ -532,3 +532,56 @@ Portal troubleshooting:
 | Pages show old content after `portal-publish` | Hard-refresh. `portal-publish` already invalidates the cache |
 | `/teacher` gives an XML error | Pages not published yet (P4), or the CloudFront function did not deploy. Open `/teacher.html` to tell them apart |
 | Site name "already taken" | Names are unique across portal tokens and CLI students. Pick another |
+
+---
+
+# Part 3: Custom domains for students
+
+A student can serve their site on their own domain (for example `www.theirname.com`) in addition to `name.margdarshakss.com`. The teacher decides who may use it.
+
+**Teacher:** on the Tokens page each student has a **Domain: off / on** button. Off (the default) shows the student a disabled field with "Owner not enabled for you. Please contact site owner." Switching it off later does not remove a domain that is already live.
+
+**Student:** on their page, **Custom domain** card:
+1. Type a subdomain such as `www.theirname.com` and click **Save**. (A bare domain like `theirname.com` is refused: it cannot hold a CNAME at most DNS providers.)
+2. At their DNS provider, add one `CNAME` record for that name pointing to `d4cls3ve04vi3.cloudfront.net` (on Cloudflare: **DNS only**, grey cloud).
+3. The page moves through *DNS record*, *HTTPS certificate*, *Finishing setup*, *Live* by itself (usually 1 to 3 minutes after the record is visible). HTTPS is automatic.
+4. **Remove domain** undoes it at any time.
+
+Rules: one domain per student; a domain can belong to only one student; the token must be active to start; `margdarshakss.com` names and AWS addresses are refused.
+
+## How it is built
+
+Each custom domain is a CloudFront **distribution tenant** of one shared multi-tenant distribution. The tenant's origin path is `/sites/<student>` (a parameter), so it serves the same files as the student's normal address. Code: `lambda/domains.py` (state machine, advanced by polling `GET /api/student/domain/status`), routes in `lambda/portal.py`, UI in `web/student.js` and `web/teacher.js`.
+
+Things that matter when you operate it:
+- **A redeploy clears the custom domain's cache too** (`create_invalidation_for_distribution_tenant`). Without that, objects would be cached for up to a year.
+- **Sites that go offline** (expired + grace, or "Take offline") stop being served on the custom domain as well; restoring brings them back.
+- **Removal** disables the tenant, waits until it is deployed, then deletes it. If a student leaves the page mid-removal, the daily sweeper finishes it.
+- **Pricing is unverified.** A community report says the first 10 tenants are free. Check the AWS billing console before enabling many students.
+
+## AWS pieces that are NOT in `template.yaml`
+
+These were created by hand with the CLI and are referenced by the `TenantDistributionId` and `RoutingEndpoint` parameters in `samconfig.toml`. `sam delete` will not remove them, and they are not recreated by `sam deploy`:
+
+| Thing | Value |
+|---|---|
+| Multi-tenant distribution (template) | `E1NTIC3LHBW49Q`, config in `custom-domain/tenant-distribution.json` |
+| CloudFront function (SPA fallback) | `student-hosting-spa-fallback`, source `custom-domain/spa-fallback.js` |
+| Connection group routing endpoint | `d4cls3ve04vi3.cloudfront.net` (what students point their CNAME at) |
+| Origin access control used by the template | `E35NKLYVBXWXX4` |
+
+To switch the feature off, deploy with `TenantDistributionId=""`: students then see no domain card.
+
+The bucket policy lets that distribution and its tenants read `sites/*` (statement `CustomDomainTenantsReadPublishedSitesOnly`).
+
+## Custom-domain troubleshooting
+
+| Symptom | Likely cause and fix |
+|---|---|
+| Stuck on "Add the DNS record" | The CNAME is not visible yet or points elsewhere. `nslookup -type=CNAME www.theirname.com` must show `d4cls3ve04vi3.cloudfront.net`. On Cloudflare the record must be DNS only |
+| "CloudFront refused this domain: ..." | The name is already attached to another CloudFront distribution or tenant. Remove it there first |
+| Live but shows an old version | Normally cleared on publish. If it persists, create an invalidation for the tenant: `aws cloudfront create-invalidation-for-distribution-tenant --id dt_xxx --invalidation-batch ...` |
+| Student cannot start (403) | The Domain switch is off for them, or the token is not active |
+| Domain stuck on "Removing" | The tenant is still deploying. It finishes by itself on the next poll or daily sweep |
+
+Always deploy from **this** folder with the safe routine: `sam deploy --no-execute-changeset --no-confirm-changeset`, read every changeset row, then `aws cloudformation execute-change-set`. A template from another copy would delete the portal, the tokens table and the sweeper.

@@ -116,12 +116,12 @@ revoked, _ = new_site("revoked", -10, revoked=True)  # revoked tokens are left a
 store["archive/gone/old.txt"] = {"Body": b"left over from an older archive"}
 
 result = portal.sweep(now)
-assert result == {"archived": ["gone"], "failed": []}, result
+assert result == {"archived": ["gone"], "failed": [], "domains_removed": []}, result
 assert "sites/gone/index.html" not in store and store["archive/gone/index.html"]["Body"] == b"gone"
 assert "archive/gone/old.txt" not in store, "leftovers of an older archive are replaced"
 assert all(f"sites/{n}/index.html" in store for n in (fresh, grace, revoked)), "other sites untouched"
 assert portal.db().get(f"tok#{gone_id}")["archived"] is True
-assert portal.sweep(now) == {"archived": [], "failed": []}, "second run does nothing"
+assert portal.sweep(now) == {"archived": [], "failed": [], "domains_removed": []}, "second run does nothing"
 view = portal.view(portal.db().get(f"tok#{gone_id}"), now, app.site_url)
 assert view["status"] == "offline" and view["archived"] is True
 
@@ -129,7 +129,7 @@ assert view["status"] == "offline" and view["archived"] is True
 broke, _ = new_site("broke", -9)
 also, _ = new_site("also", -9)
 real = app.archive_site
-portal.archive_site = lambda slug: (_ for _ in ()).throw(RuntimeError("boom")) if slug == "broke" else real(slug)
+portal.archive_site = lambda slug, tenant_id=None: (_ for _ in ()).throw(RuntimeError("boom")) if slug == "broke" else real(slug, tenant_id)
 result = portal.sweep(now)
 assert result["archived"] == ["also"] and result["failed"] == ["broke: boom"], result
 portal.archive_site = real
@@ -154,7 +154,7 @@ assert "sites/live/index.html" not in store
 call("POST", f"/api/admin/tokens/{live_id}/extend", {"days": 5}, admin)
 assert portal.view(portal.db().get(f"tok#{live_id}"), now, app.site_url)["can_deploy"] is True
 
-assert app.sweep({}, None) == {"archived": [], "failed": []}  # Lambda entry point
+assert app.sweep({}, None) == {"archived": [], "failed": [], "domains_removed": []}  # Lambda entry point
 
 # legacy CLI route still works unchanged
 event = {"routeKey": "POST /upload-url", "headers": {"x-deploy-key": "alice.s3cret"}}

@@ -6,6 +6,8 @@ const $ = (id) => document.getElementById(id);
 let token = null; // the latest token view from the server
 let picked = null; // {mode: 'folder', result} or {mode: 'zip', file}
 let busy = false;
+let domainSig = null; // what the domain card shows, so a refresh doesn't wipe a half-typed domain
+let domainTimer = null;
 let deployMode = null; // what the deploy card currently shows, so a refresh doesn't rebuild it and lose the result message
 
 function show(signedIn) {
@@ -15,7 +17,8 @@ function show(signedIn) {
 
 function signOut(message = '') {
   session('student', null);
-  token = picked = deployMode = null;
+  token = picked = deployMode = domainSig = null;
+  clearTimeout(domainTimer);
   show(false);
   $('login-error').textContent = message;
 }
@@ -44,6 +47,7 @@ function render() {
   $('title').textContent = token.student_name || token.slug;
   renderStatus();
   renderDeploy();
+  renderDomain();
 }
 
 function banner() {
@@ -135,6 +139,94 @@ function checkItem(level, text) {
 
 function uploadButton(enabled) {
   return h('div', { style: 'margin-top:12px' }, h('button', { class: 'primary', id: 'upload', disabled: !enabled, onclick: upload }, 'Upload and publish'));
+}
+
+// ---------- custom domain ----------
+const DOMAIN_STEPS = { waiting_dns: 1, issuing_certificate: 2, finishing: 3, live: 4, removing: 0 };
+
+function renderDomain() {
+  const box = $('domain');
+  const c = token.custom_domain;
+  if (!c || !c.available) { box.classList.add('hidden'); return; }
+  box.classList.remove('hidden');
+  const sig = JSON.stringify([c.enabled, c.domain, c.state, token.can_deploy]);
+  if (sig === domainSig) return;
+  domainSig = sig;
+  clearTimeout(domainTimer);
+
+  if (c.domain) return renderDomainProgress(box, c);
+
+  if (!c.enabled) {
+    fill(box, h('h2', {}, 'Custom domain'),
+      h('label', {}, 'Your domain', h('input', { disabled: true, placeholder: 'www.example.com' })),
+      h('div', { class: 'notice warn', role: 'status' }, 'Owner not enabled for you. Please contact site owner.'));
+    return;
+  }
+  const input = h('input', { name: 'domain', placeholder: 'www.example.com', autocomplete: 'off', spellcheck: 'false', 'aria-label': 'Your domain' });
+  const error = h('div', { class: 'error', role: 'alert' });
+  const save = h('button', { class: 'primary', onclick: async () => {
+    save.disabled = true;
+    error.textContent = '';
+    try {
+      ({ token } = await call('/api/student/domain', { method: 'PUT', body: { domain: input.value } }));
+      renderDomain();
+    } catch (e) {
+      error.textContent = e.message;
+    }
+    save.disabled = false;
+  } }, 'Save');
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') save.click(); });
+  fill(box, h('h2', {}, 'Custom domain'),
+    h('p', { class: 'muted small', style: 'margin:0' }, 'Use your own address, for example www.yourname.com. Use a subdomain such as www or app: a bare domain cannot use a CNAME at most DNS providers. You will add one DNS record, and HTTPS is set up automatically.'),
+    h('label', {}, 'Your domain', input), error, h('div', {}, save));
+}
+
+function renderDomainProgress(box, c) {
+  const current = DOMAIN_STEPS[c.state] ?? 0;
+  const labels = ['Add the DNS record', 'HTTPS certificate', 'Finishing setup', 'Live'];
+  const steps = h('ol', { class: 'steps' }, labels.map((label, i) => {
+    const n = i + 1;
+    const cls = c.state === 'live' || n < current ? 'done' : n === current ? 'current' : '';
+    return h('li', { class: cls }, h('span', { class: 'dot' }, cls === 'done' ? '✓' : String(n)), label);
+  }));
+  const parts = c.domain.split('.');
+  const host = parts.length > 2 ? parts.slice(0, -2).join('.') : c.domain;
+  const dns = ['waiting_dns', 'issuing_certificate'].includes(c.state) ? h('div', { class: 'stack' },
+    h('p', { style: 'margin:0' }, 'At your domain’s DNS provider, add this record:'),
+    h('table', { class: 'dns' },
+      h('tr', {}, h('th', {}, 'Type'), h('th', {}, 'Name'), h('th', {}, 'Target')),
+      h('tr', {}, h('td', {}, 'CNAME'), h('td', {}, host), h('td', {}, c.cname_target))),
+    h('p', { class: 'muted small', style: 'margin:0' }, `Some providers want the full name (${c.domain}) instead of just “${host}”. On Cloudflare, set the record to DNS only (grey cloud). This page updates by itself.`)) : null;
+  const error = h('div', { class: 'error', role: 'alert' });
+  const remove = h('button', { class: 'small danger', onclick: async () => {
+    const r = await ask({ title: 'Remove your custom domain?', text: `${c.domain} will stop showing your site. Your ${token.url.replace('https://', '').replace(/\/$/, '')} address keeps working.`, confirm: 'Remove', danger: true });
+    if (!r) return;
+    try {
+      ({ token } = await call('/api/student/domain', { method: 'DELETE' }));
+      renderDomain();
+    } catch (e) {
+      error.textContent = e.message;
+    }
+  } }, 'Remove domain');
+  fill(box, h('h2', {}, 'Custom domain'), h('div', {}, h('div', { class: 'small muted' }, 'Domain'), h('div', { style: 'font-weight:600;word-break:break-all' }, c.domain)),
+    steps, h('p', { class: 'muted small', style: 'margin:0', role: 'status' }, c.message), dns, error,
+    h('div', { style: 'display:flex;gap:8px;align-items:center;flex-wrap:wrap' },
+      c.state === 'live' ? h('a', { href: c.site_url, target: '_blank', rel: 'noopener' }, `Open ${c.site_url}`) : null, remove));
+  if (c.state !== 'live') domainTimer = setTimeout(() => pollDomain(error), 8000);
+}
+
+/** Setup advances one step per call, so poll until live (or removed). */
+async function pollDomain(errorBox) {
+  try {
+    const before = domainSig;
+    ({ token } = await call('/api/student/domain/status'));
+    renderDomain(); // a changed state rebuilds the card, which schedules its own next poll
+    const c = token.custom_domain;
+    if (domainSig === before && c.domain && c.state !== 'live') domainTimer = setTimeout(() => pollDomain(errorBox), 8000);
+  } catch (e) {
+    if (errorBox?.isConnected) errorBox.textContent = e.message;
+    domainTimer = setTimeout(() => pollDomain(errorBox), 15000);
+  }
 }
 
 // ---------- reading what the student picked ----------

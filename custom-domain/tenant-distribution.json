@@ -1,0 +1,52 @@
+{
+  "CallerReference": "student-hosting-tenant-template-1",
+  "Comment": "Student custom domains (multi-tenant template)",
+  "Enabled": true,
+  "ConnectionMode": "tenant-only",
+  "HttpVersion": "http2and3",
+  "TenantConfig": {
+    "ParameterDefinitions": [
+      {
+        "Name": "student",
+        "Definition": {
+          "StringSchema": {
+            "Comment": "Student name; the site lives at s3://bucket/sites/<student>/",
+            "Required": true
+          }
+        }
+      }
+    ]
+  },
+  "Origins": {
+    "Quantity": 1,
+    "Items": [
+      {
+        "Id": "sites",
+        "DomainName": "student-hosting-sitesbucket-pi9xyysg5smo.s3.us-east-1.amazonaws.com",
+        "OriginPath": "/sites/{{student}}",
+        "OriginAccessControlId": "E35NKLYVBXWXX4",
+        "S3OriginConfig": { "OriginAccessIdentity": "" }
+      }
+    ]
+  },
+  "DefaultCacheBehavior": {
+    "TargetOriginId": "sites",
+    "ViewerProtocolPolicy": "redirect-to-https",
+    "AllowedMethods": {
+      "Quantity": 2,
+      "Items": ["GET", "HEAD"],
+      "CachedMethods": { "Quantity": 2, "Items": ["GET", "HEAD"] }
+    },
+    "Compress": true,
+    "CachePolicyId": "658327ea-f89d-4fab-a63d-7e88639e58f6",
+    "FunctionAssociations": {
+      "Quantity": 1,
+      "Items": [
+        {
+          "EventType": "viewer-request",
+          "FunctionARN": "arn:aws:cloudfront::417780655868:function/student-hosting-spa-fallback"
+        }
+      ]
+    }
+  }
+}

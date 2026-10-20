@@ -57,9 +57,11 @@ function tokenRow(t) {
   return h('div', { class: 'row' },
     h('div', {}, who(t), h('div', { style: 'margin-top:6px' }, statusPill(t), ' ',
       t.regen.state === 'pending' ? h('span', { class: 'pill warn' }, 'Regeneration requested') : null),
-      h('div', { class: 'small muted', style: 'margin-top:4px' }, `Token …${t.hint} · ${t.last_deploy_at ? `last deploy ${date(t.last_deploy_at)}` : 'never deployed'}`)),
+      h('div', { class: 'small muted', style: 'margin-top:4px' }, `Token …${t.hint} · ${t.last_deploy_at ? `last deploy ${date(t.last_deploy_at)}` : 'never deployed'}`),
+      t.custom_domain.domain ? h('div', { class: 'small muted', style: 'margin-top:2px' }, `Custom domain: ${t.custom_domain.domain} (${t.custom_domain.state.replace('_', ' ')})`) : null),
     expiryBar(t),
     h('div', { class: 'btns' },
+      live && t.custom_domain.available ? btn(t.custom_domain.enabled ? 'Domain: on' : 'Domain: off', () => toggleDomain(t)) : null,
       live ? btn('Extend', () => extend(t)) : null,
       live && !t.archived ? btn('Take offline', () => offline(t)) : null,
       live ? btn('Revoke', () => revoke(t), 'danger') : null));
@@ -92,6 +94,11 @@ async function extend(t) {
   const r = await ask({ title: `Extend ${t.slug}`, text: 'Days are added to the current expiry (or counted from today if it has already expired).',
     fields: [{ name: 'days', label: 'Days to add', type: 'number', value: 7, min: 1, max: 365, required: true }], confirm: 'Extend' });
   if (r) act(`/api/admin/tokens/${t.id}/extend`, { days: Number(r.days) }, 'Extended');
+}
+
+async function toggleDomain(t) {
+  const enabled = !t.custom_domain.enabled;
+  act(`/api/admin/tokens/${t.id}/domain-access`, { enabled }, enabled ? `Custom domain allowed for ${t.slug}` : `Custom domain switched off for ${t.slug}`);
 }
 
 async function offline(t) {

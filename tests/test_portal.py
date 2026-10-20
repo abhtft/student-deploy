@@ -186,7 +186,7 @@ assert call("POST", f"/api/admin/tokens/{did}/approve", {"days": 5}, admin_at(la
 
 # an offline (archived) site is restored on approval
 restored = []
-portal.restore_site = restored.append
+portal.restore_site = lambda slug, tenant_id=None: restored.append(slug)
 offline = late + 40 * DAY + 4 * DAY
 portal.db().update(f"tok#{did}", {"archived": True})
 call("POST", "/api/student/regen-request", {}, login_at(offline), now=offline)

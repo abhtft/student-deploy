@@ -47,6 +47,10 @@ Daily: sweeper Lambda archives sites past expiry + grace
 
 Setup: `sam deploy`, then `node admin.mjs teacher-setup <name>`, `node admin.mjs portal-publish`, and a `deploy` CNAME at your DNS host. Step by step in [implement.md](implement.md), Part 2.
 
+## Custom domains for students
+
+The teacher can switch a custom domain on per student (the **Domain: off / on** button). The student then enters a subdomain such as `www.theirname.com`, adds one CNAME at their DNS host, and HTTPS is set up automatically. Built on CloudFront multi-tenant distributions; the AWS pieces created by hand and the operating notes are in [implement.md](implement.md), Part 3.
+
 ## One-time setup (about 20 min)
 
 Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 18+.

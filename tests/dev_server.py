@@ -16,14 +16,49 @@ here = os.path.dirname(os.path.abspath(__file__))
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
 os.environ.update(AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", AWS_ACCESS_KEY_ID="x", AWS_SECRET_ACCESS_KEY="x",
                   BUCKET="b", DISTRIBUTION_ID="E1", DISTRIBUTION_DOMAIN="d123.cloudfront.net", ROOT_DOMAIN="margdarshakss.com",
-                  KEYS_PARAM="/k")
+                  KEYS_PARAM="/k", TENANT_DISTRIBUTION_ID="EMT", ROUTING_ENDPOINT="route.cloudfront.net")
 sys.path[:0] = [os.path.join(here, "..", "lambda"), here]
 import app  # noqa: E402
+import domains  # noqa: E402
 import portal  # noqa: E402
-from fakes import FakeCloudFront, FakeS3, FakeSSM, store  # noqa: E402
+from fakes import FakeS3, FakeSSM, FakeTenantCloudFront, store  # noqa: E402
 
 WEB = os.path.join(here, "..", "web")
-app.s3, app.ssm, app.cloudfront = FakeS3(port), FakeSSM(), FakeCloudFront()
+
+
+class DevTenantCloudFront(FakeTenantCloudFront):
+    """Advances custom-domain setup with timers so the student page can be watched: each step takes STEP seconds.
+    Any domain works; the pretend CNAME becomes visible STEP seconds after the first attempt."""
+    STEP = 6
+
+    def __init__(self):
+        super().__init__()
+        self.first_seen, self.created, self.changed = {}, {}, {}
+        self.main_invalidations = []
+
+    def create_distribution_tenant(self, **kw):
+        domain = kw["Domains"][0]["Domain"]
+        self.first_seen.setdefault(domain, time.time())
+        self.dns_ok = lambda d: time.time() - self.first_seen[d] >= self.STEP
+        tenant = super().create_distribution_tenant(**kw)
+        self.created[tenant["DistributionTenant"]["Id"]] = self.changed[tenant["DistributionTenant"]["Id"]] = time.time()
+        return tenant
+
+    def get_distribution_tenant(self, Identifier):
+        self.deployed = time.time() - self.changed.get(Identifier, 0) >= self.STEP
+        return super().get_distribution_tenant(Identifier)
+
+    def get_managed_certificate_details(self, Identifier):
+        self.cert_status = "issued" if time.time() - self.created.get(Identifier, 0) >= self.STEP else "pending-validation"
+        return super().get_managed_certificate_details(Identifier)
+
+    def update_distribution_tenant(self, Id, IfMatch, Domains, **kw):
+        super().update_distribution_tenant(Id, IfMatch, Domains, **kw)
+        self.changed[Id] = time.time()
+
+
+domains._client = app.cloudfront = DevTenantCloudFront()
+app.s3, app.ssm = FakeS3(port), FakeSSM()
 salt = b"dev-salt-dev-sal"
 portal._store = portal.MemoryStore()
 portal._teacher.update(loaded_at=10**12, value={
@@ -43,7 +78,7 @@ def seed(name, expires_in_days, created_days_ago=30, **fields):
 
 
 print("Demo students (paste a token at /student.html):")
-seed("Alice", 20, last_deploy_at=t0 - 3600)
+seed("Alice", 20, last_deploy_at=t0 - 3600, domain_enabled=True)
 seed("Bob", 2, regen={"state": "pending", "requested_at": t0 - 7200, "note": "Need more time for my final project"})
 seed("Carol", -1)
 dave = seed("Dave", -5, archived=True, archived_at=t0 - 2 * DAY)
@@ -84,7 +119,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("content-length", "0")
         self.end_headers()
 
-    def do_PUT(self):  # fake presigned S3 upload
+    def do_DELETE(self):
+        self.api("DELETE")
+
+    def do_PUT(self):
+        if self.path.startswith("/api/"):
+            return self.api("PUT")
+        # otherwise: the fake presigned S3 upload
         length = int(self.headers["content-length"])
         store[self.path[len("/s3/"):]] = {"Body": self.rfile.read(length)}
         self.send(200, b"", "text/plain")
