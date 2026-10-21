@@ -24,6 +24,17 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | `student/deploy.yml` | Optional GitHub Action for students (auto-deploy on push) |
 | `student/README.md` | Student instructions |
 
+## Documentation map
+
+| Read this | For |
+|---|---|
+| **[docs/END_TO_END.md](docs/END_TO_END.md)** | **The complete workflow:** architecture, how requests travel, teacher and student workflows, setup, operations, verification, security, troubleshooting, limits |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Every HTTP route, request, response and error code |
+| [implement.md](implement.md) | Step-by-step setup and verification (Parts 1 to 4) |
+| [student/BACKEND.md](student/BACKEND.md) | Student guide to writing a backend |
+| [backend_wire.md](backend_wire.md) | Design reasoning for student backends |
+| [learning.md](learning.md) | Lessons learned, mistakes and fixes |
+
 ## Web portal (deploy.margdarshakss.com)
 
 Besides the CLI, there is a web portal with two sections, each with its own login:
