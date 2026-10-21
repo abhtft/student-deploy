@@ -58,10 +58,14 @@ function tokenRow(t) {
     h('div', {}, who(t), h('div', { style: 'margin-top:6px' }, statusPill(t), ' ',
       t.regen.state === 'pending' ? h('span', { class: 'pill warn' }, 'Regeneration requested') : null),
       h('div', { class: 'small muted', style: 'margin-top:4px' }, `Token …${t.hint} · ${t.last_deploy_at ? `last deploy ${date(t.last_deploy_at)}` : 'never deployed'}`),
-      t.custom_domain.domain ? h('div', { class: 'small muted', style: 'margin-top:2px' }, `Custom domain: ${t.custom_domain.domain} (${t.custom_domain.state.replace('_', ' ')})`) : null),
+      t.custom_domain.domain ? h('div', { class: 'small muted', style: 'margin-top:2px' }, `Custom domain: ${t.custom_domain.domain} (${t.custom_domain.state.replace('_', ' ')})`) : null,
+      backendLine(t)),
     expiryBar(t),
     h('div', { class: 'btns' },
       live && t.custom_domain.available ? btn(t.custom_domain.enabled ? 'Domain: on' : 'Domain: off', () => toggleDomain(t)) : null,
+      live && t.backend.available ? btn(t.backend.enabled ? 'Backend: on' : 'Backend: off', () => toggleBackend(t)) : null,
+      live && t.backend.available && (t.backend.enabled || t.backend.usage) ? btn('Runs…', () => editRuns(t)) : null,
+      live && t.backend.available && t.backend.enabled ? btn('+1,000', () => addRuns(t)) : null,
       live ? btn('Extend', () => extend(t)) : null,
       live && !t.archived ? btn('Take offline', () => offline(t)) : null,
       live ? btn('Revoke', () => revoke(t), 'danger') : null));
@@ -94,6 +98,33 @@ async function extend(t) {
   const r = await ask({ title: `Extend ${t.slug}`, text: 'Days are added to the current expiry (or counted from today if it has already expired).',
     fields: [{ name: 'days', label: 'Days to add', type: 'number', value: 7, min: 1, max: 365, required: true }], confirm: 'Extend' });
   if (r) act(`/api/admin/tokens/${t.id}/extend`, { days: Number(r.days) }, 'Extended');
+}
+
+function backendLine(t) {
+  const b = t.backend;
+  if (!b.available || (!b.enabled && b.state === 'none')) return null;
+  const u = b.usage;
+  const usage = u ? ` · ${u.used.toLocaleString()} / ${u.limit.toLocaleString()} runs (${u.period})` : '';
+  const state = b.state === 'none' ? 'no function yet' : b.state;
+  return h('div', { class: `small ${u && u.limit > 0 && u.used >= u.limit ? '' : 'muted'}`, style: 'margin-top:2px' }, `Backend: ${b.enabled ? 'on' : 'off'} (${state})${usage}`);
+}
+
+async function toggleBackend(t) {
+  const enabled = !t.backend.enabled;
+  act(`/api/admin/tokens/${t.id}/backend`, { enabled }, enabled ? `Backend turned on for ${t.slug}` : `Backend turned off for ${t.slug}: it stops answering requests`);
+}
+
+async function editRuns(t) {
+  const u = t.backend.usage || { limit: 5000, period: 'month', used: 0 };
+  const r = await ask({ title: `Run allowance for ${t.slug}`, text: `Used so far: ${u.used.toLocaleString()}. A “run” is one call to the student's function.`,
+    fields: [{ name: 'runs_limit', label: 'Runs allowed', type: 'number', value: u.limit, min: 0, max: 1000000, required: true },
+      { name: 'runs_period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: u.period }], confirm: 'Save' });
+  if (r) act(`/api/admin/tokens/${t.id}/backend`, { runs_limit: Number(r.runs_limit), runs_period: r.runs_period }, 'Allowance saved');
+}
+
+async function addRuns(t) {
+  const limit = (t.backend.usage?.limit ?? 5000) + 1000;
+  act(`/api/admin/tokens/${t.id}/backend`, { runs_limit: Math.min(limit, 1000000) }, `Allowance for ${t.slug} is now ${Math.min(limit, 1000000).toLocaleString()}`);
 }
 
 async function toggleDomain(t) {

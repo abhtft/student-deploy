@@ -344,3 +344,51 @@ active ──(expires_at)──▶ expired (read-only, 3 days) ──▶ offline
 8. Test invariants, not just happy paths: the offline bypass hid behind green tests.
 9. Review every changeset row, and deploy only from the right folder.
 10. Anchor scripted edits on unique text, and keep risky text out of shell heredocs.
+
+
+---
+
+## 13. Student backends (local build, 2026-10-20)
+
+What the work taught us, written before the first live run. Items marked *to verify live* are assumptions that only AWS can confirm.
+
+**Design**
+- **Check the account before designing the safety net.** One read-only call (`aws lambda get-account-settings`) showed the Lambda limit is **10 concurrent executions**, shared with other production apps. That killed the textbook defence (reserved concurrency per student) and forced a different one: an in-flight limiter in the gateway. Always read the real quotas first.
+- **A gateway beats per-student routes.** One catch-all route plus one gateway Lambda gives unlimited students and a single place for status checks, limits, counting, error mapping and the kill switch. The cost is one extra hop and two Lambda slots per request, which the limiter accounts for (3 requests in flight means at most 6 slots).
+- **Make the cost control the teacher's, and exact.** A teacher-set run allowance is a much tighter ceiling than any concurrency bound (about $0.17 per student per month at the default, versus about $17), and it is simple to explain: "5,000 runs a month".
+- **One toggle that means stop.** A backend executes code, so OFF must stop serving (unlike a custom domain, which keeps working when its switch is turned off). The toggle replaced a separate kill switch.
+- **Order of checks matters.** Cheap rejections first (secret, path, size, lifecycle, toggle, per-IP, in-flight cap), the atomic run counter last, and the slot released in a `finally`. Only a run that reaches the function is counted; a request rejected earlier never costs the student anything.
+
+**Counters**
+- **One conditional atomic update gives "no overshoot".** `ADD count 1` with the condition `attribute_not_exists(count) OR count <= limit - 1` can never exceed the limit, even with parallel callers (a 60-thread test proves it). Do not read-then-write.
+- **Limit 0 needs its own case.** With `attribute_not_exists` in the condition, a limit of 0 would let the first call through. Handle `limit <= 0` before the update.
+- **Counters leak.** A crash between increment and decrement leaves an in-flight count stuck above zero. Store `updated_at` and let the next request reset a counter that is above zero but untouched for longer than the longest possible request.
+- **Never treat a negative age as fresh.** A cache check written as `now - loaded < ttl` accepts entries from the future; use `0 <= age < ttl`.
+
+**Security**
+- **Failure details are secrets too.** A student's exception message can contain their own secrets. The visitor gets a generic error, and the platform's own logs do not record the message either (the student can read it in their function's logs).
+- **Env values are write-only.** Stored only in the function's configuration, never in DynamoDB, never returned by any API. The test asserts the value appears nowhere in any response.
+- **Scope IAM by name and guard it with a test.** The Deploy Lambda may manage only `function:sd-*`, may pass only the sandbox role and only to Lambda, and may never create roles. `tests/test_template_backend.py` asserts this against the template text, and mutation testing (widening each rule on purpose) confirmed the test catches it.
+
+**Testing**
+- **Run the student's real code in the fake.** `FakeLambda` executes uploaded Python and Node handlers, so the contract (event in, response out) is tested for real, including env vars and captured logs. The starter templates are deployed through the real gateway in the tests, so they cannot drift from the contract.
+- **A weak assertion is worse than none.** I wrote a few `... or True` lines while moving fast; they tested nothing and would have kept passing forever. Review for them before committing.
+- **Polling needs a re-schedule path.** The same bug appeared twice (custom domains, then backends): when a poll returns an unchanged state, the card is not rebuilt, so nothing schedules the next poll. The poller itself must re-arm when state is unchanged and the card did not rebuild.
+
+**Tooling trap**
+- **An unfocused browser pane never fires `<dialog>` close events.** Even a bare native dialog failed (`document.hasFocus()` was false), which looked like a bug in the app for half an hour. Diagnosis in three steps: bisect the fields, test a minimal native dialog, check focus. After fronting the tab everything worked. When a UI test "fails" in an embedded browser, test the simplest possible case before debugging your code.
+
+**What the first live run found (2026-10-21)** — everything the fakes could not know. 48 live checks now pass.
+- **Presigned URLs from a default boto3 S3 client are SigV2 in us-east-1.** S3 then rejects the upload with `SignatureDoesNotMatch` the moment a Content-Type header is added (every browser does). The site uploader already configured SigV4 + virtual addressing; the new backend code copied the call but not the client configuration. Fakes cannot show this. Fix: configure the client, and test the *real* client's settings offline (the test now fails if the fix is removed).
+- **`cfn-lint` does not catch every circular dependency.** CloudFormation refused the changeset: `Distribution -> BackendApi -> GatewayFunction -> Distribution`, closed by the shared `Globals` environment (every function referenced the distribution). Creating a changeset costs nothing and found it; lint did not. Fix: override those two variables for the one function that does not need them, plus a template test.
+- **Cache negatives for much less than positives.** A 10 s cache made a freshly deployed backend look missing for 10 s. Now 2 s for sites without a ready backend, 10 s for ready ones.
+- **AWS facts confirmed:** reserved concurrency 0 is accepted at an account limit of 10 (so the OFF belt-and-braces works); a new Python/Node function becomes Active in about 3 to 4 seconds; 8 parallel requests against a 3-request cap gave exactly 3 successes and 5 `busy`, and the slots were free again afterwards.
+- **A live test with a throwaway fixture is cheap and thorough.** The student, function, log group and counters were created by script and removed in a `finally`; a final scan proved nothing was left behind. Run the whole thing again after every fix: the Node failure only appeared after the first fixes unblocked the later steps.
+
+**A student's first real use found a gap the tests could not (2026-10-21).** A student opened their *custom domain* and every Analyze/Submit got `403`. Lessons:
+- **Every distribution that can serve a site needs every route.** The `/api/*` route was added to the distribution behind `<slug>.margdarshakss.com` but not to the separate multi-tenant distribution behind custom domains. It was on the plan as "Phase 2, pending", and the pending item became a user-visible failure within a day. When a feature has a "later" for one surface, say so loudly where users will meet it, or finish it first.
+- **Who answered is the diagnosis.** The platform's gateway always answers in JSON. An **HTML** 403 with `X-Cache: Error from cloudfront` means CloudFront itself refused the request (here: POST on a GET/HEAD-only behavior) and the backend was never reached. Reading the response headers in DevTools took one look; start there.
+- **Reproduce before fixing.** Three read-only calls confirmed it: the custom domain failed, the same student's normal address worked, and the distribution config showed one origin and no `/api/*` behavior.
+- **Multi-tenant distributions are stricter.** `update-distribution` rejected `SmoothStreaming` (not allowed on multi-tenant) and wanted `FieldLevelEncryptionId`; the fix was found one error at a time, with nothing changed by the failed calls.
+- **Dry run by default, apply on request.** The change script prints the planned change and only acts with `--apply`, saves the current configuration first, never prints or stores the secret, and is idempotent. The safety check that blocked an inline "patch and apply" in one command was right: splitting the edit from the apply, showing the plan, and asking made the production change reviewable.
+- **Guard the documented config.** `tests/test_tenant_config.py` asserts the `/api/*` behavior, POST allowed, caching disabled, and no real secret (mutation-tested). Config that lives outside CloudFormation needs tests even more, because nothing else will notice drift.

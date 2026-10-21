@@ -1,6 +1,6 @@
 # Implementation guide: test, deploy and onboard (margdarshakss.com)
 
-This guide has two parts: Part 1 (below) sets up the hosting and the CLI flow; [Part 2](#part-2-web-portal-at-deploymargdarshakss-com) adds the web portal. Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
+This guide has two parts: Part 1 (below) sets up the hosting and the CLI flow; [Part 2](#part-2-web-portal-at-deploymargdarshakss-com) adds the web portal, Part 3 custom domains, Part 4 student backends. Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
 Total time: about 45 minutes, most of it waiting for CloudFront and DNS.
 
 Commands use `curl.exe` (not `curl`) so they work in both PowerShell and Git Bash. Run everything from this folder unless told otherwise:
@@ -569,6 +569,8 @@ These were created by hand with the CLI and are referenced by the `TenantDistrib
 | CloudFront function (SPA fallback) | `student-hosting-spa-fallback`, source `custom-domain/spa-fallback.js` |
 | Connection group routing endpoint | `d4cls3ve04vi3.cloudfront.net` (what students point their CNAME at) |
 | Origin access control used by the template | `E35NKLYVBXWXX4` |
+| CloudFront function (tenant `/api` route) | `student-hosting-tenant-api`, source `custom-domain/tenant-api-route.js` |
+| Backend route on this distribution | an origin `backend` (origin path `/b/{{student}}`) and an `/api/*` behavior, added by `custom-domain/apply-tenant-api-route.py` (2026-10-21) |
 
 To switch the feature off, deploy with `TenantDistributionId=""`: students then see no domain card.
 
@@ -585,3 +587,93 @@ The bucket policy lets that distribution and its tenants read `sites/*` (stateme
 | Domain stuck on "Removing" | The tenant is still deploying. It finishes by itself on the next poll or daily sweep |
 
 Always deploy from **this** folder with the safe routine: `sam deploy --no-execute-changeset --no-confirm-changeset`, read every changeset row, then `aws cloudformation execute-change-set`. A template from another copy would delete the portal, the tokens table and the sweeper.
+
+---
+
+# Part 4: Student backends (pilot)
+
+A teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...`. Design and reasoning: [backend_wire.md](backend_wire.md). Student instructions: [student/BACKEND.md](student/BACKEND.md).
+
+```
+<slug>.margdarshakss.com/api/x → CloudFront → Backend API → gateway Lambda → student function sd-<slug>
+```
+
+**Status (2026-10-21): deployed and verified live** (see backend_wire.md for the 48-check run and the three defects it found). `samconfig.toml` sets `BackendEnabled="true"` for this stack; the template default is still `false`. Pilot rules below still apply because the Lambda quota is 10.
+
+## What the teacher controls
+
+Per student, on the Tokens page:
+- **Backend: on / off.** ON serves requests and allows deploys. OFF makes `/api` answer `503 backend_off` within about 10 seconds and pauses deploys; code and settings are kept. This is the kill switch.
+- **Runs…** sets the run allowance: a number and a period (`day`, `month`, `total`). **+1,000** is a quick top-up. A *run* is one call to the student's function that passed all earlier checks (failures and timeouts count; blocked requests do not). The default for a newly enabled student is 5,000 per month; the maximum is 1,000,000; 0 means none.
+- Usage shows on each row: `Backend: on (ready) · 3,420 / 5,000 runs (month)`.
+
+Functions and code are never deleted automatically. A student can remove their own backend; the teacher's on/off and allowance survive removal.
+
+## Protections (how your other apps stay safe at a limit of 10)
+
+The account's Lambda limit is **10 concurrent executions**, shared with your other apps, so reserved concurrency per student cannot be used yet. Instead:
+- **In-flight limiter** in the gateway: at most **3 student requests at once** in total and **2 per student**. A request over the cap gets `429 busy` immediately. Each request holds two slots (gateway + student function), so student traffic uses at most about 6 of the 10.
+- **Per-visitor limit:** 120 requests per minute per visitor per student.
+- **Backend API throttle:** 10 requests per second (burst 20), separate from the portal and CLI API.
+- **Student functions:** 256 MB, 10 s, a **sandbox role that can only write logs**, log retention 7 days.
+- **Run allowance** per student (the cost ceiling: about $0.17 per student per month at the worst for the default 5,000 runs; approximate, verify prices).
+
+**Pilot rule: enable the backend for the teacher's own test student and at most a few trusted students until the Lambda quota is raised.** To raise it:
+
+```
+aws service-quotas request-service-quota-increase --service-code lambda --quota-code L-B99A9384 --desired-value 1000
+```
+(quota code **(verify)**; or use the console: Service Quotas, AWS Lambda, "Concurrent executions"). After it is granted, set `BACKEND_RESERVED_CONCURRENCY` to 2 and raise `INFLIGHT_GLOBAL` in `template.yaml` (Globals), then deploy.
+
+## Switching it on
+
+Both deploys use the safe routine from Part 3 (changeset first, read every row, execute from this folder only).
+
+**Step 1: deploy the code with the feature still off.** `BackendEnabled` is `false`. The changeset should show: **Add** `StudentSandboxBoundary` and `StudentSandboxRole`; **Modify** `DeployFunction`, `SweeperFunction` and their roles (new environment variables and permissions); no Remove or Replace. Existing students see no change. Check the teacher page still works.
+
+**Step 2: turn the feature on.** Set `BackendEnabled="true"` in `samconfig.toml` and deploy. Expect **Add**: `BackendApi`, `GatewayFunction` (+ its role and invoke permissions), `BackendRouteFunction`; **Modify**: `Distribution` (a new origin and an `/api/*` behavior). CloudFront takes 5 to 10 minutes. Then:
+1. Publish the updated pages: `node admin.mjs portal-publish`.
+2. Check the new route answers: `curl https://<any-student>.margdarshakss.com/api/x` should return JSON `{"error": "no_backend"}` with status 404 (the gateway answering, not your site's page).
+3. Direct calls to the Backend API URL (stack output `BackendApiUrl`) without the secret header must return `403 forbidden`.
+
+**Step 3: first live run (use a temporary test student, like the custom-domain test).** Enable Backend for the student, deploy the Python and Node starter templates through the portal, call `/api/hello` on their site, set an environment variable and see the function read it, read the logs, exhaust a small allowance (`runs_limit` 3) and confirm the 429, toggle OFF and confirm the 503, then remove the backend. **Confirmed live: AWS **accepts** reserved concurrency 0 at an account limit of 10 (the gateway's own check also stops requests). Afterwards confirm nothing is left: no `sd-*` functions, log groups or test rows.
+
+**Budget safety net (do this before the pilot):** create an AWS Budget with email alerts (for example at 50% and 100% of an amount you choose) and a CloudWatch alarm on throttles and errors for `GatewayFunction`.
+
+**Rollback:** set `BackendEnabled="false"` and deploy. The gateway, API and `/api/*` behavior are removed; student functions stay in place and nothing is deleted.
+
+## Backends on custom domains
+
+A custom domain is served by a **different distribution** (the multi-tenant one from Part 3), so it needs its own `/api/*` route; the one in `template.yaml` only covers `<slug>.margdarshakss.com`. Without it, a POST to `https://<custom-domain>/api/...` is rejected by CloudFront with an **HTML 403 page** (and a GET returns the site's own page). A response from the gateway is always JSON, so "HTML 403 on `/api`" means the request never reached the backend.
+
+One-time setup (already done for this account on 2026-10-21; repeat only if that distribution is ever recreated):
+
+```
+aws cloudfront create-function --name student-hosting-tenant-api --function-config "Comment=Tenant /api route,Runtime=cloudfront-js-2.0" --function-code fileb://custom-domain/tenant-api-route.js
+aws cloudfront publish-function --name student-hosting-tenant-api --if-match <ETag from the previous command>
+python custom-domain/apply-tenant-api-route.py            # dry run: prints the planned change
+python custom-domain/apply-tenant-api-route.py --apply    # performs it, then wait for the distribution and tenants to show Deployed
+```
+
+How it works: the API origin's path is `/b/{{student}}` (the tenant parameter picks the student), and the function only removes the `/api` prefix and sets `x-viewer-ip`. The target configuration is recorded in `custom-domain/tenant-distribution.json` (secret and host are placeholders; `tests/test_tenant_config.py` fails if a real secret ever appears there). The script reads the secret from the stack at run time and saves the current configuration to a temp file first (rollback: `update-distribution` with that file).
+
+## Operating it
+
+| Task | How |
+|---|---|
+| Allow a student / stop a student | **Backend: on / off** on their row |
+| Give more runs | **+1,000**, or **Runs…** for a number and period |
+| See what a student's function is doing | Their logs: CloudWatch group `/aws/lambda/sd-<slug>` |
+| List student functions | `aws lambda list-functions --query "Functions[?starts_with(FunctionName,'sd-')].FunctionName"` |
+| Emergency stop for one student | **Backend: off**; or `aws lambda put-function-concurrency --function-name sd-<slug> --reserved-concurrent-executions 0` |
+| Emergency stop for everyone | Deploy with `BackendEnabled="false"` |
+
+| Symptom | Likely cause and fix |
+|---|---|
+| `/api/...` returns the site's own page | The backend feature is not deployed (`BackendEnabled` is false), CloudFront is still updating, or (on a custom domain) the tenant `/api` route is missing: see "Backends on custom domains" |
+| **HTML** 403 on `POST /api/...` on a custom domain | The tenant distribution has no `/api/*` behavior (CloudFront rejects POST on a GET/HEAD-only behavior). Apply `custom-domain/apply-tenant-api-route.py` |
+| `404 no_backend` | The student has not deployed yet, or the deploy is still "creating" |
+| `403 forbidden` from the gateway | The request did not come through CloudFront (missing origin secret) |
+| Many `429 busy` | The in-flight limiter is working; raise the caps only after the Lambda quota increase |
+| Deploy fails with "Could not deploy your backend" | The AWS message is shown to the student; usual causes are a bad zip or a Lambda limit |
+| Student cannot upload | Backend is off, token not active, or the zip contains `.env` / no entry file |

@@ -107,4 +107,5 @@ ol.steps li.current { color: var(--text); font-weight: 600; }
 ol.steps li.current .dot { border-color: var(--accent); }
 table.dns { border-collapse: collapse; width: 100%; font-size: 14px; }
 table.dns th, table.dns td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); word-break: break-all; }
+pre.logs { background: var(--bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; margin: 0; max-height: 260px; overflow: auto; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
 code { background: var(--bg); padding: 1px 6px; border-radius: 4px; font-size: .9em; }

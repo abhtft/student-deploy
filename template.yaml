@@ -44,6 +44,13 @@ Parameters:
     Type: String
     Default: ''
     Description: Routing endpoint of the tenant connection group (xxxx.cloudfront.net). Students point their CNAME here.
+  BackendEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: >
+      Student backends (backend_wire.md): the Backend API, the gateway function and the /api/* route on the student distribution.
+      Keep 'false' until the pilot is ready. The sandbox role below is always created but only lets a function write its own logs.
   OfflineGraceDays:
     Type: Number
     Default: 3
@@ -60,6 +67,7 @@ Rules:
 Conditions:
   UseCustomDomain: !Not [!Equals [!Ref RootDomain, '']]
   UsePortalAlias: !And [!Condition UseCustomDomain, !Equals [!Ref PortalAlias, 'true']]
+  UseBackend: !Equals [!Ref BackendEnabled, 'true']
 
 Globals:
   Function:
@@ -75,6 +83,12 @@ Globals:
         OFFLINE_GRACE_DAYS: !Ref OfflineGraceDays
         TENANT_DISTRIBUTION_ID: !Ref TenantDistributionId
         ROUTING_ENDPOINT: !Ref RoutingEndpoint
+        BACKEND_ENABLED: !Ref BackendEnabled
+        SANDBOX_ROLE_ARN: !GetAtt StudentSandboxRole.Arn
+        BACKEND_RESERVED_CONCURRENCY: '0' # the account limit is 10, so no reservation; the gateway's in-flight limiter is the cap
+        INFLIGHT_GLOBAL: '3'
+        INFLIGHT_STUDENT: '2'
+        PER_IP_PER_MINUTE: '120'
         ORIGIN_SECRET: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
 
 Resources:
@@ -261,6 +275,17 @@ Resources:
             OriginAccessControlId: !GetAtt SitesOAC.Id
             S3OriginConfig:
               OriginAccessIdentity: ''
+          - !If
+            - UseBackend
+            - Id: backend
+              DomainName: !Sub '${BackendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+              CustomOriginConfig:
+                OriginProtocolPolicy: https-only
+                OriginSSLProtocols: [TLSv1.2]
+              OriginCustomHeaders:
+                - HeaderName: x-origin-secret
+                  HeaderValue: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
+            - !Ref AWS::NoValue
         DefaultCacheBehavior:
           TargetOriginId: sites
           ViewerProtocolPolicy: redirect-to-https
@@ -271,6 +296,131 @@ Resources:
           FunctionAssociations:
             - EventType: viewer-request
               FunctionARN: !GetAtt RouterFunction.FunctionMetadata.FunctionARN
+        CacheBehaviors: !If
+          - UseBackend
+          - - PathPattern: /api/*
+              TargetOriginId: backend
+              ViewerProtocolPolicy: https-only
+              AllowedMethods: [GET, HEAD, OPTIONS, PUT, POST, PATCH, DELETE]
+              CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad # Managed-CachingDisabled
+              OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac # Managed-AllViewerExceptHostHeader (forwards Authorization)
+              FunctionAssociations:
+                - EventType: viewer-request
+                  FunctionARN: !GetAtt BackendRouteFunction.FunctionMetadata.FunctionARN
+          - !Ref AWS::NoValue
+
+  # ---------- Student backends (backend_wire.md) ----------
+  # <slug>.<RootDomain>/api/x  ->  CloudFront  ->  Backend API  ANY /b/{slug}/{proxy+}  ->  gateway Lambda  ->  student function sd-<slug>
+  BackendRouteFunction:
+    Type: AWS::CloudFront::Function
+    Condition: UseBackend
+    Properties:
+      Name: !Sub '${AWS::StackName}-backend-route'
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Map <slug>.<RootDomain>/api/* to /b/<slug>/* for the gateway and pass the real viewer IP
+        Runtime: cloudfront-js-2.0
+      FunctionCode: !Sub |
+        var ROOT_DOMAIN = '${RootDomain}'.toLowerCase();
+        var NAME = /^[a-z0-9][a-z0-9-]{0,29}$/;
+
+        function handler(event) {
+          var request = event.request;
+          var host = request.headers.host ? request.headers.host.value.toLowerCase() : '';
+          var suffix = '.' + ROOT_DOMAIN;
+          if (!ROOT_DOMAIN || host.length <= suffix.length || host.slice(-suffix.length) !== suffix) return notFound();
+          var slug = host.slice(0, host.length - suffix.length);
+          if (!NAME.test(slug)) return notFound();
+          var rest = request.uri.slice('/api'.length);
+          request.uri = '/b/' + slug + (rest.length ? rest : '/');
+          // Overwrites anything the client sent; the gateway trusts it only together with the origin secret header.
+          request.headers['x-viewer-ip'] = { value: event.viewer.ip };
+          return request;
+        }
+
+        function notFound() {
+          return { statusCode: 404, statusDescription: 'Not Found' };
+        }
+
+  # Upper limit for every student function role: write its own logs, nothing else.
+  StudentSandboxBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Permission boundary for student backend functions (logs only)
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action: [logs:CreateLogStream, logs:PutLogEvents]
+            Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sd-*:*'
+
+  StudentSandboxRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Description: Execution role shared by all student backend functions. Can only write its own logs.
+      PermissionsBoundary: !Ref StudentSandboxBoundary
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: write-own-logs
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: [logs:CreateLogStream, logs:PutLogEvents]
+                Resource: !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sd-*:*'
+
+  # Its own API so student traffic has its own throttle and cannot make the portal or the CLI API unusable.
+  BackendApi:
+    Type: AWS::Serverless::HttpApi
+    Condition: UseBackend
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  GatewayFunction:
+    Type: AWS::Serverless::Function
+    Condition: UseBackend
+    Properties:
+      CodeUri: lambda/
+      Handler: gateway.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 20 # a student function may run up to 15 s
+      Environment:
+        Variables:
+          # The gateway needs neither. Overriding the shared (Globals) values removes its reference to Distribution, which would
+          # otherwise close a loop: Distribution -> BackendApi -> GatewayFunction -> Distribution (CloudFormation refuses it).
+          DISTRIBUTION_ID: ''
+          DISTRIBUTION_DOMAIN: ''
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow
+              Action: lambda:InvokeFunction
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sd-*'
+      Events:
+        StudentRoute:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BackendApi
+            Path: /b/{slug}/{proxy+}
+            Method: ANY
+        StudentRoot:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref BackendApi
+            Path: /b/{slug}
+            Method: ANY
 
   # ---------- Web portal (deploy.<RootDomain>) ----------
   # Static pages come from s3://bucket/portal/ (node admin.mjs portal-publish); /api/* goes to the API below.
@@ -405,6 +555,29 @@ Resources:
             - Effect: Allow
               Action: [acm:RequestCertificate, acm:DescribeCertificate, acm:ListCertificates, acm:AddTagsToCertificate]
               Resource: '*'
+            - Effect: Allow # student backends: manage ONLY functions named sd-*
+              Action:
+                - lambda:CreateFunction
+                - lambda:UpdateFunctionCode
+                - lambda:UpdateFunctionConfiguration
+                - lambda:GetFunction
+                - lambda:GetFunctionConfiguration
+                - lambda:DeleteFunction
+                - lambda:PutFunctionConcurrency
+                - lambda:DeleteFunctionConcurrency
+                - lambda:TagResource
+              Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sd-*'
+            - Effect: Allow # hand the sandbox role (and only that role) to Lambda
+              Action: iam:PassRole
+              Resource: !GetAtt StudentSandboxRole.Arn
+              Condition:
+                StringEquals:
+                  'iam:PassedToService': lambda.amazonaws.com
+            - Effect: Allow
+              Action: [logs:CreateLogGroup, logs:PutRetentionPolicy, logs:DeleteLogGroup, logs:FilterLogEvents]
+              Resource:
+                - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sd-*'
+                - !Sub 'arn:${AWS::Partition}:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/sd-*:*'
       Events:
         UploadUrl:
           Type: HttpApi
@@ -493,6 +666,10 @@ Outputs:
     Value: !Ref PortalDistribution
   TokensTableName:
     Value: !Ref TokensTable
+  BackendApiUrl:
+    Condition: UseBackend
+    Description: Backend API (reached through CloudFront at <student>.<RootDomain>/api/)
+    Value: !Sub 'https://${BackendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
   KeysParameterName:
     Value: !Ref KeysParameterName
   TeacherParameterName:

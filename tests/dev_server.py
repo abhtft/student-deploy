@@ -16,12 +16,15 @@ here = os.path.dirname(os.path.abspath(__file__))
 port = int(sys.argv[1]) if len(sys.argv) > 1 else 8777
 os.environ.update(AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", AWS_ACCESS_KEY_ID="x", AWS_SECRET_ACCESS_KEY="x",
                   BUCKET="b", DISTRIBUTION_ID="E1", DISTRIBUTION_DOMAIN="d123.cloudfront.net", ROOT_DOMAIN="margdarshakss.com",
-                  KEYS_PARAM="/k", TENANT_DISTRIBUTION_ID="EMT", ROUTING_ENDPOINT="route.cloudfront.net")
+                  KEYS_PARAM="/k", TENANT_DISTRIBUTION_ID="EMT", ROUTING_ENDPOINT="route.cloudfront.net",
+                  BACKEND_ENABLED="true", SANDBOX_ROLE_ARN="arn:aws:iam::1:role/sandbox", ORIGIN_SECRET="dev-origin-secret", GATEWAY_CACHE_SECONDS="0")
 sys.path[:0] = [os.path.join(here, "..", "lambda"), here]
 import app  # noqa: E402
+import backends  # noqa: E402
 import domains  # noqa: E402
+import gateway  # noqa: E402
 import portal  # noqa: E402
-from fakes import FakeS3, FakeSSM, FakeTenantCloudFront, store  # noqa: E402
+from fakes import FakeLambda, FakeLogs, FakeS3, FakeSSM, FakeTenantCloudFront, store  # noqa: E402
 
 WEB = os.path.join(here, "..", "web")
 
@@ -59,6 +62,11 @@ class DevTenantCloudFront(FakeTenantCloudFront):
 
 domains._client = app.cloudfront = DevTenantCloudFront()
 app.s3, app.ssm = FakeS3(port), FakeSSM()
+# Student backends: a fake Lambda that really runs the uploaded Python/Node handler, behind the real gateway code
+dev_logs = FakeLogs()
+dev_lambda = FakeLambda(dev_logs)
+dev_lambda.polls_until_active = 2
+backends._clients.update({"lambda": dev_lambda, "logs": dev_logs, "s3": app.s3})
 salt = b"dev-salt-dev-sal"
 portal._store = portal.MemoryStore()
 portal._teacher.update(loaded_at=10**12, value={
@@ -78,12 +86,13 @@ def seed(name, expires_in_days, created_days_ago=30, **fields):
 
 
 print("Demo students (paste a token at /student.html):")
-seed("Alice", 20, last_deploy_at=t0 - 3600, domain_enabled=True)
+seed("Alice", 20, last_deploy_at=t0 - 3600, domain_enabled=True, backend={"enabled": True, "runs_limit": 25, "runs_period": "month", "state": "none"})
 seed("Bob", 2, regen={"state": "pending", "requested_at": t0 - 7200, "note": "Need more time for my final project"})
 seed("Carol", -1)
 dave = seed("Dave", -5, archived=True, archived_at=t0 - 2 * DAY)
 seed("Erin", 10, revoked=True)
-print("Teacher: teacher / teacher-pass-123\n", flush=True)
+print("Teacher: teacher / teacher-pass-123")
+print("Backend demo: sign in as Alice, deploy a backend (see student/backend-template), then try  http://127.0.0.1:%d/b/alice/hello\n" % port, flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -109,7 +118,25 @@ class Handler(BaseHTTPRequestHandler):
         result = app.handler(event, None)
         self.send(result["statusCode"], result["body"].encode())
 
+    def gateway(self, method):
+        """What CloudFront + API Gateway do in production: add the origin secret and the viewer IP, then call the gateway."""
+        length = int(self.headers.get("content-length") or 0)
+        path, _, query = self.path.partition("?")
+        event = {"rawPath": path, "rawQueryString": query, "body": self.rfile.read(length).decode() if length else None,
+                 "requestContext": {"http": {"method": method, "sourceIp": "10.0.0.1"}},
+                 "headers": {**{k.lower(): v for k, v in self.headers.items()}, "x-origin-secret": "dev-origin-secret", "x-viewer-ip": self.client_address[0]}}
+        result = gateway.handler(event, None)
+        body = result["body"].encode()
+        self.send_response(result["statusCode"])
+        for name, value in result["headers"].items():
+            self.send_header(name, value)
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_POST(self):
+        if self.path.startswith("/b/"):
+            return self.gateway("POST")
         self.api("POST")
 
     def do_OPTIONS(self):
@@ -120,9 +147,13 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_DELETE(self):
+        if self.path.startswith("/b/"):
+            return self.gateway("DELETE")
         self.api("DELETE")
 
     def do_PUT(self):
+        if self.path.startswith("/b/"):
+            return self.gateway("PUT")
         if self.path.startswith("/api/"):
             return self.api("PUT")
         # otherwise: the fake presigned S3 upload
@@ -131,6 +162,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, b"", "text/plain")
 
     def do_GET(self):
+        if self.path.startswith("/b/"):
+            return self.gateway("GET")
         if self.path.startswith("/api/"):
             return self.api("GET")
         name = self.path.split("?")[0].lstrip("/") or "index.html"

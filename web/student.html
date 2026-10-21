@@ -30,6 +30,7 @@
       <div id="status" class="card stack"></div>
       <div id="deploy" class="card stack"></div>
       <div id="domain" class="card stack hidden"></div>
+      <div id="backend" class="card stack hidden"></div>
       <details id="guide" class="card">
         <summary>Upload guidelines</summary>
         <ul>
@@ -38,7 +39,7 @@
           <li>File names: use letters, digits, <code>-</code>, <code>_</code> and <code>.</code> only. No spaces. Prefer lowercase: <code>Logo.png</code> and <code>logo.png</code> are different files online.</li>
           <li>Do not include <code>node_modules</code>, <code>.git</code> or <code>.env</code> files.</li>
           <li>Limits: 2,000 files, 200 MB in total, 50 MB zipped.</li>
-          <li>If your app calls a backend, it must use <code>https://</code> and allow your site's address in CORS.</li>
+          <li>If your app calls a backend of its own elsewhere, it must use <code>https://</code> and allow your site's address in CORS. If your teacher enabled <strong>Backend</strong> for you, you can host a small function here instead and call it at <code>/api/…</code> on your own site (no CORS needed).</li>
           <li>You can upload again at any time while your token is active. Each upload replaces the previous version.</li>
         </ul>
       </details>

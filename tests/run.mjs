@@ -44,6 +44,21 @@ await step('custom domains: switch, setup states, removal, cache invalidation, s
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('backends: allowance, limiter, gateway, deploy flow, Python and Node handlers', () => {
+  const r = spawnSync(python, [join(here, 'test_backend.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('backends: template IAM scoping and switches', () => {
+  const r = spawnSync(python, [join(here, 'test_template_backend.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('custom domains: tenant distribution config routes /api/* to the backend (no secrets in the repo)', () => {
+  const r = spawnSync(python, [join(here, 'test_tenant_config.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
@@ -93,6 +108,36 @@ await step('portal function: clean URLs, API viewer IP', () => {
   const api = handler({ request: { uri: '/api/teacher/login', headers: { 'x-viewer-ip': { value: '6.6.6.6' } } }, viewer: { ip: '203.0.113.9' } });
   assert.equal(api.uri, '/api/teacher/login');
   assert.equal(api.headers['x-viewer-ip'].value, '203.0.113.9', 'a client-supplied value is overwritten');
+});
+
+await step('backend route function: /api/* to /b/<slug>/*', () => {
+  const template = readFileSync(join(root, 'template.yaml'), 'utf8').replaceAll('\r\n', '\n');
+  const after = template.split('${AWS::StackName}-backend-route')[1];
+  const body = after.split('FunctionCode: !Sub |\n')[1].split('\n\n  # Upper limit')[0];
+  const code = body.split('\n').map((l) => l.slice(8)).join('\n').replace('${RootDomain}', 'example.com');
+  const handler = new Function(`${code}\nreturn handler;`)();
+  const run = (host, uri, ip = '203.0.113.9') => handler({ request: { uri, headers: { host: { value: host } } }, viewer: { ip } });
+  assert.equal(run('alice.example.com', '/api/hello').uri, '/b/alice/hello');
+  assert.equal(run('alice.example.com', '/api').uri, '/b/alice/');
+  assert.equal(run('alice.example.com', '/api/').uri, '/b/alice/');
+  assert.equal(run('alice-2.example.com', '/api/a/b/c').uri, '/b/alice-2/a/b/c');
+  assert.equal(run('ALICE.Example.com', '/api/x').uri, '/b/alice/x', 'host matching is case-insensitive');
+  for (const host of ['a.b.example.com', 'example.com', 'alice.other.com', '-bad.example.com', '']) {
+    assert.equal(run(host, '/api/x').statusCode, 404, host);
+  }
+  const forged = handler({ request: { uri: '/api/x', headers: { host: { value: 'alice.example.com' }, 'x-viewer-ip': { value: '6.6.6.6' } } }, viewer: { ip: '203.0.113.9' } });
+  assert.equal(forged.headers['x-viewer-ip'].value, '203.0.113.9', 'a client-supplied viewer IP is overwritten');
+});
+
+await step('tenant api route function: strips /api, passes the viewer IP', () => {
+  const code = readFileSync(join(root, 'custom-domain', 'tenant-api-route.js'), 'utf8');
+  const handler = new Function(`${code}\nreturn handler;`)();
+  const run = (uri, headers = {}) => handler({ request: { uri, headers }, viewer: { ip: '203.0.113.9' } });
+  assert.equal(run('/api/analyse').uri, '/analyse');
+  assert.equal(run('/api/a/b/c').uri, '/a/b/c');
+  assert.equal(run('/api/').uri, '/');
+  assert.equal(run('/api').uri, '/');
+  assert.equal(run('/api/x', { 'x-viewer-ip': { value: '6.6.6.6' } }).headers['x-viewer-ip'].value, '203.0.113.9', 'a client-supplied viewer IP is overwritten');
 });
 
 // ---- 3. End to end: real deploy.mjs -> real Lambda code -> fake AWS ----

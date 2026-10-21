@@ -1,6 +1,27 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "portal-dev", "runtimeExecutable": "python", "runtimeArgs": ["tests/dev_server.py", "8777"], "port": 8777 }
+    {
+      "name": "portal-dev",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "tests/dev_server.py",
+        "8777"
+      ],
+      "port": 8777
+    },
+    {
+      "name": "shopping-dist2",
+      "runtimeExecutable": "python",
+      "runtimeArgs": [
+        "D:/Github_Codes/Shopping_List_Prepare_by_voice_command_dist2/backend/dev_server.py",
+        "--static",
+        "D:/Github_Codes/Shopping_List_Prepare_by_voice_command_dist2/dist",
+        "--mock-llm",
+        "--port",
+        "8788"
+      ],
+      "port": 8788
+    }
   ]
 }

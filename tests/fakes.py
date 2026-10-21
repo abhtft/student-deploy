@@ -1,5 +1,8 @@
 """In-memory stand-ins for S3 and CloudFront shared by the local tests."""
+import io
 import json
+import os
+import time
 
 from botocore.exceptions import ClientError
 
@@ -128,3 +131,187 @@ class FakeTenantCloudFront:
     def create_invalidation_for_distribution_tenant(self, Id, InvalidationBatch):
         self._tenant(Id)
         self.invalidations.append((Id, InvalidationBatch["Paths"]["Items"]))
+
+
+class FakeLogs:
+    """CloudWatch Logs: just enough for log groups, retention and filter_log_events."""
+
+    def __init__(self):
+        self.groups, self.retention = {}, {}
+
+    def create_log_group(self, logGroupName):
+        if logGroupName in self.groups:
+            raise ClientError({"Error": {"Code": "ResourceAlreadyExistsException"}}, "CreateLogGroup")
+        self.groups[logGroupName] = []
+
+    def put_retention_policy(self, logGroupName, retentionInDays):
+        self.retention[logGroupName] = retentionInDays
+
+    def delete_log_group(self, logGroupName):
+        if logGroupName not in self.groups:
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "DeleteLogGroup")
+        del self.groups[logGroupName]
+
+    def add(self, group, message):
+        self.groups.setdefault(group, []).append({"timestamp": int(time.time() * 1000), "message": message})
+
+    def filter_log_events(self, logGroupName, limit=50, startTime=0):
+        if logGroupName not in self.groups:
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "FilterLogEvents")
+        return {"events": [e for e in self.groups[logGroupName] if e["timestamp"] >= startTime][-limit:]}
+
+
+class FakeLambda:
+    """Lambda control plane + invoke. Python and Node handlers from the uploaded zip are REALLY executed, so the
+    student contract (payload v2 event in, {statusCode, headers, body} out) is tested end to end."""
+
+    def __init__(self, logs=None):
+        self.functions, self.calls, self.logs = {}, [], logs
+        self.polls_until_active = 1  # get_function calls before a new/updated function is Active
+        self.fail_create = None  # message: new functions end up Failed
+        self.invoke_error = None  # (code, message): invoke itself fails (e.g. TooManyRequestsException)
+        self.function_error = None  # message: the function "crashes" with this errorMessage
+        self.concurrency_error = False
+
+    @staticmethod
+    def _error(code, message="", op="Call"):
+        return ClientError({"Error": {"Code": code, "Message": message}}, op)
+
+    def _get(self, name):
+        if name not in self.functions:
+            raise self._error("ResourceNotFoundException", f"Function not found: {name}")
+        return self.functions[name]
+
+    def create_function(self, **kw):
+        self.calls.append(("create_function", kw["FunctionName"]))
+        name = kw["FunctionName"]
+        if name in self.functions:
+            raise self._error("ResourceConflictException", "exists", "CreateFunction")
+        assert name.startswith("sd-") and kw["Role"] and kw["Runtime"] in ("nodejs22.x", "python3.12")
+        self.functions[name] = {
+            "zip": store[kw["Code"]["S3Key"]]["Body"], "polls": 0, "updating": False, "concurrency": None, "tags": kw.get("Tags", {}),
+            "config": {"FunctionName": name, "Runtime": kw["Runtime"], "Handler": kw["Handler"], "Role": kw["Role"],
+                       "MemorySize": kw["MemorySize"], "Timeout": kw["Timeout"], "State": "Pending", "Environment": {"Variables": {}}},
+        }
+
+    def update_function_code(self, FunctionName, S3Bucket, S3Key):
+        self.calls.append(("update_function_code", FunctionName))
+        function = self._get(FunctionName)
+        function.update(zip=store[S3Key]["Body"], polls=0, updating=True)
+
+    def get_function(self, FunctionName):
+        function = self._get(FunctionName)
+        function["polls"] += 1
+        config = dict(function["config"])
+        if self.fail_create:
+            config.update(State="Failed", StateReason=self.fail_create)
+        elif function["polls"] >= self.polls_until_active:
+            function["config"]["State"], function["updating"] = "Active", False
+            config.update(State="Active", LastUpdateStatus="Successful")
+        else:
+            config.update(State="Pending" if config["State"] == "Pending" else "Active", LastUpdateStatus="InProgress")
+        return {"Configuration": config}
+
+    def get_function_configuration(self, FunctionName):
+        return dict(self._get(FunctionName)["config"])
+
+    def update_function_configuration(self, FunctionName, Environment):
+        function = self._get(FunctionName)
+        if function["updating"]:
+            raise self._error("ResourceConflictException", "update in progress")
+        function["config"]["Environment"] = Environment
+
+    def delete_function(self, FunctionName):
+        self._get(FunctionName)
+        self.calls.append(("delete_function", FunctionName))
+        del self.functions[FunctionName]
+
+    def put_function_concurrency(self, FunctionName, ReservedConcurrentExecutions):
+        if self.concurrency_error:
+            raise self._error("InvalidParameterValueException", "unreserved concurrency below minimum")
+        self._get(FunctionName)["concurrency"] = ReservedConcurrentExecutions
+        self.calls.append(("put_function_concurrency", FunctionName, ReservedConcurrentExecutions))
+
+    def delete_function_concurrency(self, FunctionName):
+        self._get(FunctionName)["concurrency"] = None
+        self.calls.append(("delete_function_concurrency", FunctionName))
+
+    # ---- invoke: runs the student's real code ----
+    def invoke(self, FunctionName, InvocationType, Payload):
+        self.calls.append(("invoke", FunctionName))
+        if self.invoke_error:
+            raise self._error(*self.invoke_error, "Invoke")
+        function = self._get(FunctionName)
+        if function["concurrency"] == 0:
+            raise self._error("TooManyRequestsException", "Rate Exceeded.", "Invoke")
+        event = json.loads(Payload)
+        if self.function_error:
+            return {"StatusCode": 200, "FunctionError": "Unhandled", "Payload": Body(json.dumps({"errorMessage": self.function_error}).encode())}
+        runner = self._run_node if function["config"]["Runtime"].startswith("nodejs") else self._run_python
+        try:
+            result, output = runner(function, event)
+        except Exception as e:  # the handler crashed
+            return {"StatusCode": 200, "FunctionError": "Unhandled",
+                    "Payload": Body(json.dumps({"errorMessage": str(e)[:300], "errorType": type(e).__name__}).encode())}
+        if self.logs is not None:
+            for line in output.splitlines():
+                self.logs.add(f"/aws/lambda/{FunctionName}", line)
+        return {"StatusCode": 200, "Payload": Body(json.dumps(result).encode())}
+
+    @staticmethod
+    def _env(function):
+        return dict((function["config"].get("Environment") or {}).get("Variables") or {})
+
+    def _run_python(self, function, event):
+        import contextlib
+        import importlib.util
+        import sys
+        import tempfile
+        import zipfile
+
+        class Context:
+            function_name = function["config"]["FunctionName"]
+
+            @staticmethod
+            def get_remaining_time_in_millis():
+                return function["config"]["Timeout"] * 1000
+
+        with tempfile.TemporaryDirectory() as folder:
+            zipfile.ZipFile(io.BytesIO(function["zip"])).extractall(folder)
+            saved_env, saved_path = dict(os.environ), list(sys.path)
+            out = io.StringIO()
+            try:
+                os.environ.update(self._env(function))
+                sys.path.insert(0, folder)
+                spec = importlib.util.spec_from_file_location("student_app", os.path.join(folder, "app.py"))
+                module = importlib.util.module_from_spec(spec)
+                with contextlib.redirect_stdout(out):
+                    spec.loader.exec_module(module)
+                    result = module.handler(event, Context())
+            finally:
+                os.environ.clear()
+                os.environ.update(saved_env)
+                sys.path[:] = saved_path
+        return result, out.getvalue()
+
+    def _run_node(self, function, event):
+        import subprocess
+        import tempfile
+        import zipfile
+        entry = "index.mjs" if "index.mjs" in zipfile.ZipFile(io.BytesIO(function["zip"])).namelist() else "index.js"
+        runner = ("import { pathToFileURL } from 'node:url';\n"
+                  f"const m = await import(pathToFileURL(process.cwd() + '/{entry}').href);\n"
+                  "const handler = m.handler ?? m.default?.handler;\n"
+                  "const result = await handler(JSON.parse(process.env.EVENT), {});\n"
+                  "console.log('__RESULT__' + JSON.stringify(result ?? null));\n")
+        with tempfile.TemporaryDirectory() as folder:
+            zipfile.ZipFile(io.BytesIO(function["zip"])).extractall(folder)
+            with open(os.path.join(folder, "__runner.mjs"), "w", encoding="utf8") as f:
+                f.write(runner)
+            done = subprocess.run(["node", "__runner.mjs"], cwd=folder, capture_output=True, text=True, timeout=20,
+                                  env={**os.environ, **self._env(function), "EVENT": json.dumps(event)})
+        if done.returncode != 0:
+            raise RuntimeError((done.stderr.strip().splitlines() or ["node failed"])[-1])
+        lines = done.stdout.splitlines()
+        result = next(json.loads(l[len("__RESULT__"):]) for l in reversed(lines) if l.startswith("__RESULT__"))
+        return result, "\n".join(l for l in lines if not l.startswith("__RESULT__"))

@@ -51,6 +51,10 @@ Setup: `sam deploy`, then `node admin.mjs teacher-setup <name>`, `node admin.mjs
 
 The teacher can switch a custom domain on per student (the **Domain: off / on** button). The student then enters a subdomain such as `www.theirname.com`, adds one CNAME at their DNS host, and HTTPS is set up automatically. Built on CloudFront multi-tenant distributions; the AWS pieces created by hand and the operating notes are in [implement.md](implement.md), Part 3.
 
+## Student backends (pilot)
+
+The teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...` (no CORS to configure). Per student the teacher has a **Backend on/off** toggle and a **run allowance** (a number of runs per day, month or in total). Student code runs in a log-only sandbox behind a gateway with an in-flight limiter that protects the rest of the AWS account. Built and tested locally; **not yet deployed** (`BackendEnabled` is `false` by default). Plan: [backend_wire.md](backend_wire.md). Setup and operations: [implement.md](implement.md) Part 4. Students: [student/BACKEND.md](student/BACKEND.md) and the starter templates in `student/backend-template/`.
+
 ## One-time setup (about 20 min)
 
 Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 18+.
