@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
 const python = spawnSync('python', ['--version']).status === 0 ? 'python' : 'python3';
+// boto3 clients are created when the Lambda modules are imported; the tests never call AWS, but a region must be set (CI has none)
+process.env.AWS_DEFAULT_REGION ??= 'us-east-1';
 const PORT = 8765;
 let failures = 0;
 
