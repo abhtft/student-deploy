@@ -22,6 +22,7 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | `admin.mjs` | Add, remove and list students |
 | `student/deploy.mjs` | The file you hand to students |
 | `student/deploy.yml` | Optional GitHub Action for students (auto-deploy on push) |
+| `student/portal-deploy.mjs`, `portal-deploy.yml`, `CICD.md` | Token-based deploy of `frontend/` and `backend/` from a laptop or GitHub Actions (guide for students: `student/CICD.md`) |
 | `student/README.md` | Student instructions |
 
 ## Documentation map

@@ -71,6 +71,11 @@ await step('web: folder checks and zip builder (zip validated by the Lambda code
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('student CLI: portal-deploy.mjs publishes backend and frontend with a token', () => {
+  const r = spawnSync('node', [join(here, 'test_portal_cli.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 // ---- 2. CloudFront router function (extracted from template.yaml) ----
 function loadRouter(rootDomain) {
   const template = readFileSync(join(root, 'template.yaml'), 'utf8').replace(/\r\n/g, '\n');

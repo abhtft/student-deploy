@@ -155,6 +155,8 @@ Nothing is deleted automatically: archives, functions and code stay until a huma
 
 The older command-line route is unchanged: the teacher runs `node admin.mjs add <name>`, and the student runs `node deploy.mjs` with `DEPLOY_KEY` (see `student/README.md`).
 
+The newest route is **deploy from GitHub with the portal token** (no extra keys or AWS access): the student copies `student/portal-deploy.mjs` and `student/portal-deploy.yml` into their repo, stores their token as the secret `PORTAL_TOKEN`, and every push to `main` publishes `backend/` first, then `frontend/`, through the same API the portal uses (so expiry, revoke, the backend switch and the run allowance all apply). It stops working when the token expires. Guide: `student/CICD.md`; end-to-end tested by `tests/test_portal_cli.mjs`.
+
 ### 3.3 Student: adding a backend (`/student`, **Backend** card)
 
 Requires **Backend: on** from the teacher. Full guide: [../student/BACKEND.md](../student/BACKEND.md).

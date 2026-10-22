@@ -126,6 +126,10 @@ def cleanup():
     table.delete_item(Key={"pk": f"slug#{SLUG}"})
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.delete_object(Bucket=BUCKET, Key=f"uploads/{SLUG}-backend.zip")
+    s3.delete_object(Bucket=BUCKET, Key=f"uploads/{SLUG}.zip")
+    for page in s3.get_paginator("list_object_versions").paginate(Bucket=BUCKET, Prefix=f"sites/{SLUG}/"):
+        for v in (page.get("Versions") or []) + (page.get("DeleteMarkers") or []):
+            s3.delete_object(Bucket=BUCKET, Key=v["Key"], VersionId=v["VersionId"])
 
 
 table.put_item(Item={"pk": f"slug#{SLUG}", "token": tid})
@@ -162,7 +166,11 @@ try:
         s, body = api("PUT", "/api/student/backend/env", {"name": "GREETING", "value": "live-secret-value-42"}, session)
         check("set env var", s == 200 and body["token"]["backend"]["env_names"] == ["GREETING"], body)
         check("env value is never returned by the API", "live-secret-value-42" not in json.dumps(body))
-        time.sleep(4)  # the function reconfigures after the change
+        for _ in range(30):  # the function reconfigures after the change: wait until AWS says it is done
+            if lam.get_function_configuration(FunctionName=f"sd-{SLUG}").get("LastUpdateStatus") == "Successful":
+                break
+            time.sleep(1)
+        time.sleep(1)
         s, b, _ = site("/api/x")
         check("function sees the env var; platform headers are stripped", s == 200 and b["greeting"] == "live-secret-value-42" and b["leaked"] == [], (s, b))
         check("visitor IP is passed in sourceIp", b.get("ip") not in (None, "", "10.0.0.1"), b)
@@ -233,6 +241,25 @@ try:
         check("runtime recorded as nodejs22.x", lam.get_function_configuration(FunctionName=f"sd-{SLUG}")["Runtime"] == "nodejs22.x")
         cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
         check("sandbox settings: 256 MB, 10 s, logs-only role", cfg["MemorySize"] == 256 and cfg["Timeout"] == 10 and cfg["Role"].endswith(cfg["Role"].split("/")[-1]) and "Sandbox" in cfg["Role"], cfg["Role"])
+
+    # ---------- G: the token-based CLI (student/portal-deploy.mjs), as used from a laptop or GitHub Actions ----------
+    import subprocess
+    import tempfile
+    api("DELETE", "/api/student/backend", session=session)  # the runtime cannot change in place (Node -> Python)
+    with tempfile.TemporaryDirectory() as project:
+        os.makedirs(os.path.join(project, "frontend", "dist"))
+        os.makedirs(os.path.join(project, "backend"))
+        open(os.path.join(project, "frontend", "dist", "index.html"), "w").write("<h1>live-cli-smoke</h1>")
+        for n, text in template("python").items():
+            open(os.path.join(project, "backend", n), "w", encoding="utf8").write(text)
+        cli = subprocess.run(["node", os.path.join(ROOT, "..", "portal-deploy.mjs"), "--skip-build"], cwd=project, capture_output=True, text=True,
+                             env={**os.environ, "PORTAL_URL": BASE, "PORTAL_TOKEN": token})
+        check("CLI: portal-deploy.mjs publishes backend and frontend with the token", cli.returncode == 0 and "Frontend live at" in cli.stdout and "Backend ready" in cli.stdout, cli.stdout + cli.stderr)
+        time.sleep(3)
+        s, b, _ = site("/api/health")
+        check("CLI: the deployed backend answers", s == 200 and b == {"ok": True}, (s, b))
+        s, b, _ = site("/")
+        check("CLI: the deployed frontend is served", s == 200 and "live-cli-smoke" in str(b), (s, str(b)[:80]))
 finally:
     cleanup()
     leftover_functions = [f["FunctionName"] for f in lam.list_functions()["Functions"] if f["FunctionName"] == f"sd-{SLUG}"]
