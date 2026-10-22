@@ -14,6 +14,15 @@ my-project/
 
 Either folder may be missing: a frontend-only project just has `frontend/`. Other folder names work with `--frontend <dir>` and `--backend <dir>`.
 
+**Is your app at the top of the repo** (a normal Vite or React project, with `backend/` beside `src/`)? That works too: use `node portal-deploy.mjs --frontend .`, and in the workflow set `FRONTEND: .` and add `--frontend .` to the deploy command. Do not rename `src/`.
+
+### How it knows what to build and publish
+Nothing is guessed from your code. It follows two rules:
+1. **Build:** in the frontend folder (`frontend/` by default, or whatever `--frontend` names), if `package.json` has a `build` script, it runs `npm run build`.
+2. **Publish:** it publishes the build output folder, the first of `dist/`, `build/` or `out/` (inside that folder) that contains an `index.html`. A plain site with no build step also works if its `index.html` sits directly in a folder such as `frontend/`.
+
+Safety rules: the repo root itself is never published as-is, and `.env` files and `node_modules` are never included. `backend/` is a separate step with its own folder.
+
 In your frontend, call the backend with a **relative** address, which works on your site and on a custom domain: `fetch('/api/items')`. (`/api/...` reaches your `backend/` function.)
 
 ## One-time setup

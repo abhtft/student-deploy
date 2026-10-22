@@ -118,3 +118,5 @@ async function api(path, options) {
 ## Using a backend you host elsewhere
 
 You can instead call a backend on another service (Vercel, Railway, Supabase, ...). Read its address from your build settings (for example `import.meta.env.VITE_API_URL` in Vite), make sure it is served over `https://`, and allow your site's address (`https://<your-site>`) in its CORS settings.
+
+

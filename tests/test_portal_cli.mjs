@@ -62,6 +62,28 @@ try {
     assert.doesNotMatch(again.stdout, /Backend/);
   });
 
+  // an app at the repo root (a normal Vite project) next to backend/ is a supported layout: only its build output is published
+  const rootLayout = project('rootapp', { frontend: false });
+  mkdirSync(join(rootLayout, 'dist'), { recursive: true });
+  writeFileSync(join(rootLayout, 'dist', 'index.html'), '<h1>root app</h1>');
+  writeFileSync(join(rootLayout, 'dist', '.env'), 'SECRET=1');
+  const rootRun = run(rootLayout, tokens.Alice, '--frontend', '.');
+  check('app at the repo root: --frontend . publishes dist/ (and backend/ too), never a .env', () => {
+    assert.equal(rootRun.status, 0, rootRun.stdout + rootRun.stderr);
+    assert.match(rootRun.stdout, /Frontend: packed 1 files from dist\//);
+    assert.match(rootRun.stdout, /Backend ready/);
+  });
+  const noBuild = join(work, 'nobuild');
+  mkdirSync(noBuild, { recursive: true });
+  writeFileSync(join(noBuild, 'index.html'), '<h1>source</h1>');
+  writeFileSync(join(noBuild, '.env'), 'SECRET=1');
+  const noBuildRun = run(noBuild, tokens.Alice, '--frontend', '.');
+  check('repo root without a build folder is refused, not published as-is', () => {
+    assert.notEqual(noBuildRun.status, 0);
+    assert.match(noBuildRun.stderr, /No build folder/);
+    assert.doesNotMatch(noBuildRun.stdout, /publishing/);
+  });
+
   // 3. refusals each give a clear message and a failing exit code
   const frontOnly = project('bob', { backend: false });
   const bob = run(frontOnly, tokens.Bob);

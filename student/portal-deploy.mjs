@@ -139,10 +139,14 @@ function buildFrontend(project) {
 
 async function deployFrontend(session, project) {
   if (!flag('--skip-build')) buildFrontend(project);
+  // Which folder is published: the build output (dist/, build/ or out/ inside the frontend folder). A plain site with no build step
+  // (index.html directly in a frontend/ folder) works too, but the repo root itself is never published as-is: it holds backend/, .git, .env ...
+  const isRepoRoot = relative(process.cwd(), project) === '';
   const dir = ['dist', 'build', 'out'].map((d) => join(project, d)).find((d) => existsSync(join(d, 'index.html')))
-    || (existsSync(join(project, 'index.html')) ? project : null);
-  if (!dir) fail(`No build folder with index.html found in ${project}/ (looked in dist/, build/, out/). Run the build first.`);
-  const files = listFiles(dir).filter((f) => !JUNK.test(relative(dir, f).split(sep).join('/')));
+    || (!isRepoRoot && existsSync(join(project, 'index.html')) ? project : null);
+  if (!dir) fail(`No build folder with index.html found in ${project}/ (looked in dist/, build/, out/). Make sure "npm run build" creates one.`);
+  const hidden = (f) => /(^|\/)(\.env(\..*)?|node_modules)(\/|$)/.test(relative(dir, f).split(sep).join('/'));
+  const files = listFiles(dir).filter((f) => !JUNK.test(relative(dir, f).split(sep).join('/')) && !hidden(f));
   const zip = zipFiles(dir, files);
   console.log(`▶ Frontend: packed ${files.length} files from ${dir}/ (${(zip.length / 1024).toFixed(0)} KB)`);
   const { uploadUrl, maxBytes } = await api('POST', '/api/student/upload-url', { session });

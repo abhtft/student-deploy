@@ -28,10 +28,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      # Install the frontend packages (portal-deploy.mjs then runs `npm run build` itself).
-      # Backend-only repo, or no package-lock.json? Delete this step (or use `npm install`).
-      - run: npm ci
-        working-directory: frontend
+      # Install the frontend packages if there are any (portal-deploy.mjs then runs `npm run build` itself).
+      # Your app is in another folder (or the repo root)? Change FRONTEND below and add the same --frontend option to the deploy step.
+      - name: Install frontend packages
+        env:
+          FRONTEND: frontend
+        run: |
+          if [ -f "$FRONTEND/package-lock.json" ]; then (cd "$FRONTEND" && npm ci)
+          elif [ -f "$FRONTEND/package.json" ]; then (cd "$FRONTEND" && npm install)
+          else echo "No $FRONTEND/package.json: nothing to install"; fi
       - run: node portal-deploy.mjs
         env:
           PORTAL_TOKEN: ${{ secrets.PORTAL_TOKEN }}
