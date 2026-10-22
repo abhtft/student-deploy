@@ -228,6 +228,8 @@ aws cloudformation execute-change-set ...
 | Emergency stop for one student | the **Backend: off** button, or `aws lambda put-function-concurrency --function-name sd-<slug> --reserved-concurrent-executions 0` |
 | Stop all backends | deploy with `BackendEnabled="false"` (functions stay, nothing is deleted) |
 | Local click-through, no AWS | `python tests/dev_server.py` then `http://localhost:8777/` (demo teacher login and tokens are printed) |
+| Live smoke test after a deploy (production, about 3 min) | `python tests/live_smoke.py`: a temporary student deploys Python and Node backends and exercises the whole path; it removes everything it created |
+| Automatic checks on GitHub | `.github/workflows/ci.yml` runs cfn-lint and `node tests/run.mjs` on every push and pull request (no AWS credentials) |
 
 ### 4.4 Resources outside CloudFormation
 
@@ -312,7 +314,7 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 
 ## 6. How it was verified
 
-**Automated (17 checks, `node tests/run.mjs`, no AWS needed):** portal logic, publishing, regeneration, sweeper, custom-domain state machine, backend allowance (exact under 60 parallel callers), in-flight limiter and leak recovery, gateway lifecycle and header hygiene, response shaping, real Python and Node handlers executed from uploaded zips, starter templates, SigV4 presigned-URL configuration, template IAM scoping (mutation-tested), the CloudFront functions, the tenant distribution config, the folder checkers and the in-browser zip builder (validated by the Lambda's own validator).
+**Automated (18 checks, `node tests/run.mjs`, no AWS needed):** portal logic, publishing, regeneration, sweeper, custom-domain state machine, backend allowance (exact under 60 parallel callers), in-flight limiter and leak recovery, gateway lifecycle and header hygiene, response shaping, real Python and Node handlers executed from uploaded zips, starter templates, SigV4 presigned-URL configuration, template IAM scoping (mutation-tested), the CloudFront functions, the tenant distribution config, the folder checkers and the in-browser zip builder (validated by the Lambda's own validator).
 
 **In the browser (local dev server):** teacher and student flows, expiry bars and banners, uploads with failing and passing checklists, the custom-domain stepper, the backend card (deploy, env, logs, allowance, off/on), light and dark themes, phone width.
 
