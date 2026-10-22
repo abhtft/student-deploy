@@ -26,4 +26,8 @@ jobs:
       - name: Template lint
         run: cfn-lint -i W1030 -t template.yaml
       - name: Local test suite
-        run: node tests/run.mjs
+        run: node tests/run.mjs 2>&1 | tee test-output.txt; exit ${PIPESTATUS[0]}
+      - name: Show failing checks as an annotation
+        if: failure()
+        run: |
+          grep -A14 '✖' test-output.txt | head -60 | python -c "import sys; print('::error title=Failing checks::' + sys.stdin.read().replace('%', '%25').replace(chr(10), '%0A'))"
