@@ -108,6 +108,16 @@ def site(path, method="GET", body=None):
     return s, b, h
 
 
+def load_platform_modules():
+    """The platform's own Lambda modules, run here with the real AWS clients (the teacher API needs a password, so the class AI
+    connector is switched on and off through the same code the portal runs). Returns the openrouter module."""
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lambda"))
+    os.environ.update(TOKENS_TABLE=table.name, AI_ENABLED="true", AI_SECRET_NAME="openrouter", BACKEND_ENABLED="true", BUCKET=BUCKET,
+                      AWS_DEFAULT_REGION="us-east-1", AWS_REGION="us-east-1", ROOT_DOMAIN=os.environ.get("SMOKE_ROOT_DOMAIN", "margdarshakss.com"))
+    import openrouter
+    return openrouter
+
+
 def cleanup():
     for name in [f"sd-{SLUG}"]:
         try:
@@ -119,6 +129,14 @@ def cleanup():
             logs.delete_log_group(logGroupName=f"/aws/lambda/{name}")
         except ClientError:
             pass
+    # the temporary student's OpenRouter key (section H) must not outlive the test: delete it BEFORE the row that records its hash
+    try:
+        ai_hash = ((table.get_item(Key={"pk": f"tok#{tid}"}).get("Item") or {}).get("ai") or {}).get("hash")
+        if ai_hash:
+            load_platform_modules().delete_key(ai_hash)
+            log("cleanup: deleted the temporary OpenRouter key")
+    except Exception as e:  # reported again by the final check below
+        log("cleanup: could not delete the OpenRouter key:", e)
     scan = table.scan(FilterExpression="contains(pk, :s) OR pk = :g", ExpressionAttributeValues={":s": SLUG, ":g": "inflight#global"})
     for item in scan["Items"]:
         table.delete_item(Key={"pk": item["pk"]})
@@ -260,6 +278,60 @@ try:
         check("CLI: the deployed backend answers", s == 200 and b == {"ok": True}, (s, b))
         s, b, _ = site("/")
         check("CLI: the deployed frontend is served", s == 200 and "live-cli-smoke" in str(b), (s, str(b)[:80]))
+
+    # ---------- H: the class AI connector end to end: a real capped OpenRouter key, called from the student's real function ----------
+    openrouter = load_platform_modules()
+    import ai
+    import portal
+    ai_now = lambda: int(time.time())  # noqa: E731
+    item = portal.db().get(f"tok#{tid}")
+    api("DELETE", "/api/student/backend", session=session)  # start from a clean function, as a new student would
+    item = ai.set_ai(item, {"enabled": True, "limit_usd": 0.01, "period": "total"}, ai_now())
+    ai_hash = ai.settings(item)["hash"]
+    remote = openrouter.get_key(ai_hash)
+    check("AI: a capped key exists at OpenRouter (limit $0.01, not disabled)", remote["limit"] == 0.01 and not remote["disabled"], remote)
+    ASK = ("import json, os, urllib.request, urllib.error\n"
+           "def handler(event, context):\n"
+           "    body = json.dumps({'model': os.environ['AI_MODEL'], 'max_tokens': 20, 'messages': [{'role': 'user', 'content': 'Reply with the single word: ok'}]}).encode()\n"
+           "    req = urllib.request.Request(os.environ['OPENAI_BASE_URL'] + '/chat/completions', data=body, headers={'Authorization': 'Bearer ' + os.environ['OPENAI_API_KEY'], 'Content-Type': 'application/json'})\n"
+           "    try:\n"
+           "        with urllib.request.urlopen(req, timeout=20) as r:\n"
+           "            data = json.load(r)\n"
+           "        return {'statusCode': 200, 'headers': {'content-type': 'application/json'}, 'body': json.dumps({'ok': True, 'text': data['choices'][0]['message']['content'][:20], 'model': data.get('model')})}\n"
+           "    except urllib.error.HTTPError as e:\n"
+           "        return {'statusCode': 200, 'headers': {'content-type': 'application/json'}, 'body': json.dumps({'ok': False, 'http': e.code})}\n")
+    if deploy(session, {"app.py": ASK}, "AI handler (first deploy while AI is on)"):
+        cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
+        names = sorted((cfg.get("Environment") or {}).get("Variables", {}))
+        check("AI: the function was created with the three variables and the 25 s timeout", names == ["AI_MODEL", "OPENAI_API_KEY", "OPENAI_BASE_URL"] and cfg["Timeout"] == 25, (names, cfg["Timeout"]))
+        s, b, _ = site("/api/ask")
+        check("AI: the student's function answers through the gateway using its own key", s == 200 and b.get("ok") is True and b.get("text"), (s, b))
+        check("AI: the default model is used", "haiku" in str(b.get("model", "")).lower(), b)
+        used = 0
+        for _ in range(10):
+            s, body = api("GET", "/api/student/ai", session=session)
+            used = body["token"]["ai"]["used_usd"] if s == 200 else 0
+            if used > 0:
+                break
+            time.sleep(3)
+        check("AI: the production portal reads the usage from OpenRouter (IAM + secret work)", used > 0, used)
+        check("AI: the student's own view never contains a key", "sk-or-" not in json.dumps(body))
+        openrouter.update_key(ai_hash, limit_usd=0.00001)  # shrink the cap so it can be reached in seconds
+        outcome = []
+        for _ in range(14):
+            s, b, _ = site("/api/ask")
+            outcome.append(b.get("http") if isinstance(b, dict) and b.get("ok") is False else s)
+            if outcome[-1] == 403:
+                break
+            time.sleep(1)
+        check("AI: once the cap is used OpenRouter refuses with 403 (cap enforced at the provider)", 403 in outcome, outcome)
+        item = ai.set_ai(portal.db().get(f"tok#{tid}"), {"enabled": False}, ai_now())
+        check("AI: switching off disables the key at OpenRouter", openrouter.get_key(ai_hash)["disabled"] is True)
+        cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
+        check("AI: switching off removes the variables and restores the 10 s timeout",
+              not any(n in (cfg.get("Environment") or {}).get("Variables", {}) for n in ai.AI_ENV_NAMES) and cfg["Timeout"] == 10, cfg["Timeout"])
+        item = ai.set_ai(portal.db().get(f"tok#{tid}"), {"enabled": True}, ai_now())
+        check("AI: switching on again re-enables the same key", openrouter.get_key(ai_hash)["disabled"] is False and ai.settings(item)["hash"] == ai_hash)
 finally:
     cleanup()
     leftover_functions = [f["FunctionName"] for f in lam.list_functions()["Functions"] if f["FunctionName"] == f"sd-{SLUG}"]
@@ -268,5 +340,10 @@ finally:
     check("cleanup: test log group removed", leftover_groups == [], leftover_groups)
     left = [i["pk"] for i in table.scan(FilterExpression="contains(pk, :s)", ExpressionAttributeValues={":s": SLUG})["Items"]]
     check("cleanup: no test rows left", left == [], left)
+    try:
+        keys_left = [k.get("name") for k in load_platform_modules()._call("GET", "/keys")["data"] if str(k.get("name", "")).startswith(f"student:{SLUG}")]
+        check("cleanup: no temporary OpenRouter key left", keys_left == [], keys_left)
+    except Exception as e:
+        check("cleanup: could not list OpenRouter keys", False, e)
 log("ALL STEPS PASSED" if not failures else f"FAILED: {failures}")
 sys.exit(0 if not failures else 1)

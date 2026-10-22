@@ -51,6 +51,27 @@ Parameters:
     Description: >
       Student backends (backend_wire.md): the Backend API, the gateway function and the /api/* route on the student distribution.
       Keep 'false' until the pilot is ready. The sandbox role below is always created but only lets a function write its own logs.
+  AiEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: >
+      Class AI connector: the teacher can give a student's backend a capped, revocable OpenRouter key (needs BackendEnabled='true' and the
+      secret named below). Off by default; with it off nothing about student backends changes.
+  AiSecretName:
+    Type: String
+    Default: openrouter
+    Description: >
+      Secrets Manager secret holding the OpenRouter MANAGEMENT key as JSON {"OPENROUTER_MANAGEMENT_KEY": "..."}. Only the portal and
+      sweeper functions may read it; it is never given to a student function.
+  AiDefaultModel:
+    Type: String
+    Default: anthropic/claude-haiku-5.5
+    Description: OpenRouter model id given to students as AI_MODEL. Change it here (or per student on the teacher page) to use another model.
+  AiDefaultLimitUsd:
+    Type: String
+    Default: '0.25'
+    Description: Default spending cap per student in USD, used the first time the teacher switches AI on. The teacher can edit it per student.
   AlertEmailParameter:
     Type: String
     Default: ''
@@ -79,6 +100,7 @@ Conditions:
   UseCustomDomain: !Not [!Equals [!Ref RootDomain, '']]
   UsePortalAlias: !And [!Condition UseCustomDomain, !Equals [!Ref PortalAlias, 'true']]
   UseBackend: !Equals [!Ref BackendEnabled, 'true']
+  UseAi: !Equals [!Ref AiEnabled, 'true']
   UseAlerts: !Not [!Equals [!Ref AlertEmailParameter, '']]
   UseAlertsAndBackend: !And [!Condition UseAlerts, !Condition UseBackend]
 
@@ -103,6 +125,11 @@ Globals:
         INFLIGHT_STUDENT: '2'
         PER_IP_PER_MINUTE: '120'
         ORIGIN_SECRET: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
+        AI_ENABLED: !Ref AiEnabled
+        AI_SECRET_NAME: !Ref AiSecretName
+        AI_DEFAULT_MODEL: !Ref AiDefaultModel
+        AI_DEFAULT_LIMIT_USD: !Ref AiDefaultLimitUsd
+        AI_STUDENT_TIMEOUT: '25' # AI answers take seconds; the gateway below waits up to 29 (the HTTP API's own limit is 30)
 
 Resources:
   # ---------- Storage ----------
@@ -421,7 +448,7 @@ Resources:
       Runtime: python3.12
       Architectures: [arm64]
       MemorySize: 256
-      Timeout: 20 # a student function may run up to 15 s
+      Timeout: 29 # a student function may run up to 25 s (AI-enabled ones), and the HTTP API gives up at 30
       Environment:
         Variables:
           # The gateway needs neither. Overriding the shared (Globals) values removes its reference to Distribution, which would
@@ -595,6 +622,12 @@ Resources:
                 - lambda:DeleteFunctionConcurrency
                 - lambda:TagResource
               Resource: !Sub 'arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:sd-*'
+            - !If # class AI connector: read the OpenRouter management key (this one secret, nothing else)
+              - UseAi
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AiSecretName}-??????'
+              - !Ref AWS::NoValue
             - Effect: Allow # hand the sandbox role (and only that role) to Lambda
               Action: iam:PassRole
               Resource: !GetAtt StudentSandboxRole.Arn
@@ -650,6 +683,12 @@ Resources:
             - Effect: Allow
               Action: [dynamodb:UpdateItem, dynamodb:DeleteItem, dynamodb:Scan]
               Resource: !GetAtt TokensTable.Arn
+            - !If # class AI connector: read the OpenRouter management key (this one secret, nothing else)
+              - UseAi
+              - Effect: Allow
+                Action: secretsmanager:GetSecretValue
+                Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AiSecretName}-??????'
+              - !Ref AWS::NoValue
             - Effect: Allow
               Action:
                 - cloudfront:GetDistributionTenant

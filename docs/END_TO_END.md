@@ -171,6 +171,21 @@ Requires **Backend: on** from the teacher. Full guide: [../student/BACKEND.md](.
 
 What visitors see when something is off: see the error table in [API_REFERENCE.md](API_REFERENCE.md#student-backend-gateway). A complete worked example (a React app plus a Python backend) lives in `D:\Github_Codes\Shopping_List_Prepare_by_voice_command_dist2`.
 
+### 3.3a Class AI connector (optional, teacher-controlled)
+
+Many students have no AI key. The teacher can give a student's **backend** an AI key that is capped, revocable and metered by OpenRouter, so nothing is typed in and nothing can overspend. It is off by default (`AiEnabled=false`) and per student.
+
+**Teacher** (`/teacher`, student row; needs the Backend on):
+- **AI: off / on** switches it. First time on: a default cap of **$0.25 per month** (`AiDefaultLimitUsd`) with the default model (`AiDefaultModel`, Haiku 5.5). The row then shows `AI: on · model · $used of $cap per month (about N answers)`.
+- **AI cap...** edits the cap ($0.01 to $20), the period (day, month or total) and the model (empty means the class default).
+- Off, revoke, take offline and expiry all **disable the student's key at once** (expiry by the daily sweeper at the latest); extending enables it again. A provider outage never blocks the teacher's own action: the sweeper retries.
+
+**Student** (Backend card, section **Class AI**): the function receives `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `AI_MODEL` automatically, so any OpenAI-compatible library or a plain `fetch` works; a Python and a Node example are on the card, with the usage meter. While the connector is on those three names are reserved (the student cannot overwrite or delete them); with it off a student may set their own key as before. The function timeout is 25 s instead of 10 s while AI is on.
+
+**How it works** (`lambda/ai.py`, `lambda/openrouter.py`): one **management key** (Secrets Manager secret `openrouter`, JSON `{"OPENROUTER_MANAGEMENT_KEY": "..."}`) can create keys; only the Deploy and Sweeper functions may read it. For each student the platform creates their own OpenRouter key with a dollar `limit` and `limit_reset` (daily, monthly or none), stores it on the token item (never returned by any API) and writes it into the student's function. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Switch-off disables the key **before** touching anything else. Money is stored as whole micro-dollars (DynamoDB has no floats).
+
+Good to know (measured live): OpenRouter counts usage a few seconds to about half a minute late, so a cap can be overshot slightly; the usage meter on the student page lags the same way (it refreshes every 60 s, the server caches 20 s); a capped-out key answers **HTTP 403 "Key limit exceeded"**; a disabled key answers 401. The free `:free` models are shared with everyone on OpenRouter and returned 429 in every test, so the paid model is the default. A key can call **any** OpenRouter model, so the dollar cap, not a model list, is the control.
+
 ### 3.4 Student: adding a custom domain (**Custom domain** card)
 
 Requires **Domain: on** from the teacher.
@@ -250,8 +265,8 @@ If the tenant distribution is ever recreated, redo its `/api` route with `custom
 
 ### 4.5 Configuration reference
 
-Template parameters (`samconfig.toml`): `AlertEmailParameter`, `ConcurrencyAlarmThreshold`, `RootDomain`, `CertificateArn`, `PortalAlias`, `TenantDistributionId`, `RoutingEndpoint`, `BackendEnabled`, `OfflineGraceDays`, `KeysParameterName`, `TeacherParameterName`.
-Lambda environment (set for every function through `Globals`): `BUCKET`, `DISTRIBUTION_ID`, `DISTRIBUTION_DOMAIN`, `ROOT_DOMAIN`, `KEYS_PARAM`, `TOKENS_TABLE`, `TEACHER_PARAM`, `OFFLINE_GRACE_DAYS`, `TENANT_DISTRIBUTION_ID`, `ROUTING_ENDPOINT`, `BACKEND_ENABLED`, `SANDBOX_ROLE_ARN`, `BACKEND_RESERVED_CONCURRENCY` (0: not usable at an account limit of 10), `INFLIGHT_GLOBAL` (3), `INFLIGHT_STUDENT` (2), `PER_IP_PER_MINUTE` (120), `ORIGIN_SECRET` (derived from the stack ID).
+Template parameters (`samconfig.toml`): `AiEnabled`, `AiSecretName`, `AiDefaultModel`, `AiDefaultLimitUsd`, `AlertEmailParameter`, `ConcurrencyAlarmThreshold`, `RootDomain`, `CertificateArn`, `PortalAlias`, `TenantDistributionId`, `RoutingEndpoint`, `BackendEnabled`, `OfflineGraceDays`, `KeysParameterName`, `TeacherParameterName`.
+Lambda environment (set for every function through `Globals`): `BUCKET`, `DISTRIBUTION_ID`, `DISTRIBUTION_DOMAIN`, `ROOT_DOMAIN`, `KEYS_PARAM`, `TOKENS_TABLE`, `TEACHER_PARAM`, `OFFLINE_GRACE_DAYS`, `TENANT_DISTRIBUTION_ID`, `ROUTING_ENDPOINT`, `BACKEND_ENABLED`, `SANDBOX_ROLE_ARN`, `BACKEND_RESERVED_CONCURRENCY` (0: not usable at an account limit of 10), `INFLIGHT_GLOBAL` (3), `INFLIGHT_STUDENT` (2), `PER_IP_PER_MINUTE` (120), `ORIGIN_SECRET` (derived from the stack ID), `AI_ENABLED`, `AI_SECRET_NAME`, `AI_DEFAULT_MODEL`, `AI_DEFAULT_LIMIT_USD`, `AI_STUDENT_TIMEOUT` (25).
 
 ### 4.5a Alerts (cost budget and alarms)
 
@@ -282,6 +297,15 @@ aws s3api delete-object --bucket <bucket> --key sites/alice/index.html --version
 
 The bucket name is the physical id of `SitesBucket` in the stack. Pages already cached by CloudFront show the restored file after the cache expires, or after an invalidation. Verified live: two writes, a delete, then a restore returned the latest content.
 
+### 4.5c Class AI connector setup (once)
+
+1. At OpenRouter create a **management key** (Settings, Management Keys; it can create and disable keys but cannot make model calls). Keep some credit on the account: the credit balance is the real class-wide ceiling.
+2. In AWS Secrets Manager (us-east-1) store a secret named `openrouter` with the key `OPENROUTER_MANAGEMENT_KEY`. Never paste the key into chat, files or the repository (a test fails if one is committed).
+3. Set `AiEnabled="true"` in `samconfig.toml` (the secret name, default model and default cap have parameters too), run the safe deploy routine, then `node admin.mjs portal-publish`.
+4. Teacher page: **AI: on** for a student with the Backend on. Verify with `python tests/live_smoke.py` (section H creates one temporary $0.01 key and deletes it).
+
+Rotate: create a new management key, update the secret (the functions re-read it within 5 minutes), delete the old key at OpenRouter. The keys the platform makes are named `student:<slug>`.
+
 ### 4.6 Limits at a glance
 
 | Area | Limit |
@@ -308,6 +332,7 @@ The bucket name is the physical id of `SitesBucket` in the stack. Pages already 
 - **The control plane is narrow.** The Deploy Lambda may manage only functions named `sd-*`, may pass only the sandbox role and only to Lambda, and may never create roles; `tests/test_template_backend.py` guards this against accidental widening.
 - **The gateway protects the account.** Direct calls to the Backend API are refused; slots are capped so student traffic cannot take more than about 6 of the account's 10 Lambda slots; every limit is enforced on the server.
 - **Secrets:** environment variables are write-only and never stored in DynamoDB or returned by any API; failure details never reach visitors or platform logs; `.env` files in uploads are refused.
+- **The AI management key stays on the platform.** Only the Deploy and Sweeper functions can read that one secret (a test guards the scope); a student's function only ever gets the student's own capped key, which dies when AI is switched off, the token is revoked or it expires. The key is never in an API response, a log or the repository.
 - **Text is never HTML** in the portal pages (a small DOM helper builds every element).
 
 Known residual risks: a student's public `/api` can be called by anyone, so strangers can use up a student's run allowance (limits and teacher top-ups mitigate it); function egress to the internet is unrestricted.
@@ -359,12 +384,19 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 | Custom domain "CloudFront refused this domain" | the name is attached to another distribution | remove it there first |
 | Domain stuck on "Removing" | the tenant is still deploying | it finishes on the next poll or the daily sweep |
 | Site name "already taken" | names are unique across portal tokens, CLI students and reserved names | choose another |
+| AI call fails with HTTP 403 "Key limit exceeded" | the student's cap is used up (counted a little late) | **AI cap...** to raise it, or wait for the period to reset |
+| AI call fails with HTTP 401 | the key is disabled: AI off, token revoked or expired | switch AI on / extend the token |
+| Switching AI on says "Press the switch again" (409) | the student's function was still updating | repeat; nothing is lost and no second key is made |
+| Switching AI on says "OpenRouter refused the change" (502) | provider error or a wrong/rotated management key | read the message; check the `openrouter` secret and the OpenRouter status |
+| AI usage number looks behind | OpenRouter counts usage with a delay of up to about half a minute | wait and refresh |
 
 A response from the platform's gateway is always JSON `{"error": "<code>"}`. An **HTML** error page from `X-Cache: Error from cloudfront` means CloudFront itself refused the request and the backend was never reached.
 
 ---
 
 ## 8. Costs
+
+The AI connector spends the OpenRouter credit: with Haiku 5.5 a typical answer (about 1,000 tokens in, 500 out) costs about $0.00035, so the default $0.25 cap per student is roughly 700 answers. Prices change: check OpenRouter. The per-student cap and the account credit balance bound the spend.
 
 Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): a class costs a few cents to a few dollars a month. The run allowance bounds backend compute per student (the default 5,000 runs of at most 10 s at 256 MB is roughly $0.17 per student per month at the very worst, approximate). Custom-domain tenant pricing is **not verified**: a community report says the first 10 tenants are free; check the billing console. Cost alerts come from the account's own AWS Budget (not managed here); error alarms are in section 4.5a. Versioned buckets keep old versions for 30 days, which adds a small storage cost.
 
@@ -382,6 +414,8 @@ Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): 
 | No teacher button to remove a student's custom domain | switch the permission off, take the site offline, or revoke |
 | Custom-domain pieces are outside CloudFormation | documented and guarded by a test; bring them into the template later |
 | `/api` exactly (no trailing slash) | the `/api/*` route does not match it, so the visitor gets the site's own page. `/api/` and everything below it reach the student's function (path `/` for `/api/`). Frontends should always call `/api/<route>` (checked live on both the normal address and a custom domain) |
+| The AI cap is a dollar cap, not a model list | a student's key can call any OpenRouter model; a hard allow-list would need a proxy (3 Lambdas per call at the account limit of 10) |
+| AI answers are not streamed | the function and gateway return one response; the longest wait is 25 s |
 | Not yet: CORS allow-list for cross-origin use, "Request more runs" from the student, custom-domain support for the portal address itself | listed in `backend_wire.md` |
 
 ---
@@ -396,6 +430,7 @@ Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): 
 | `lambda/domains.py` | custom-domain state machine, removal, teacher switch |
 | `lambda/backends.py` | backend control plane: validate, create/update, env, logs, remove, toggle, allowance |
 | `lambda/gateway.py` | the gateway for every student backend call |
+| `lambda/ai.py`, `lambda/openrouter.py` | class AI connector: per-student capped OpenRouter keys, function environment, usage, lifecycle |
 | `web/` | the portal pages and modules (`teacher`, `student`, `common`, `check`, `backend`, `backend-check`, `zip`, `shared.css`) |
 | `admin.mjs` | `add`, `remove`, `list`, `teacher-setup`, `portal-publish` |
 | `student/` | CLI uploader, guides, starter backend templates, local backend runner |

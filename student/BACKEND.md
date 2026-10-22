@@ -115,6 +115,30 @@ async function api(path, options) {
 | `/api/...` returns your site's page | Your teacher has not enabled the backend yet, or it is not deployed |
 | Cannot upload | The token must be active, and the Backend must be on |
 
+## Using the class AI (when your teacher switches it on)
+
+You do not need an AI key. When your teacher turns **AI** on for you, your function gets three environment variables automatically: `OPENAI_API_KEY`, `OPENAI_BASE_URL` and `AI_MODEL`. They work with any OpenAI-compatible library, or with a plain request:
+
+```python
+import json, os, urllib.request
+
+def ask_ai(prompt):
+    request = urllib.request.Request(
+        os.environ["OPENAI_BASE_URL"] + "/chat/completions",
+        data=json.dumps({"model": os.environ["AI_MODEL"], "max_tokens": 300,
+                         "messages": [{"role": "user", "content": prompt}]}).encode(),
+        headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)["choices"][0]["message"]["content"]
+```
+
+Rules that keep it working (and safe):
+- **Never send the key to the browser or print it in logs.** Your page calls your own `/api/...` route; that route calls the AI.
+- You have a **spending cap** (shown on the Backend card). When it is used up the call fails with HTTP 403 "Key limit exceeded": catch it and show a friendly message. The number on the card can be up to half a minute behind.
+- Answers take a few seconds. While AI is on, your function may run up to **25 s**. Keep `max_tokens` small.
+- Your prompts go to the AI provider: do not send personal or private data.
+- While AI is on you cannot overwrite the three variables. If you would rather use your own key, ask your teacher to switch it off and set your own.
+
 ## Using a backend you host elsewhere
 
 You can instead call a backend on another service (Vercel, Railway, Supabase, ...). Read its address from your build settings (for example `import.meta.env.VITE_API_URL` in Vite), make sure it is served over `https://`, and allow your site's address (`https://<your-site>`) in its CORS settings.

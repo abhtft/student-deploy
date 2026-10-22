@@ -1,29 +1,35 @@
 // The student's "Backend" card: upload, state, usage meter, environment variables, logs, removal.
 import { analyzeBackend, BACKEND_LIMITS } from './backend-check.js';
-import { ask, date, fill, h, toast } from './common.js';
+import { ask, date, fill, h, toast, usd } from './common.js';
 import { buildZip } from './zip.js';
 
 let sig = null; // structural state; the card is rebuilt only when it changes, so typing is never wiped
 let timer = null;
 let meterBox = null;
+let aiMeterBox = null;
+let aiTimer = null;
 let picked = null; // {mode: 'zip', file} | {mode: 'folder', result}
 
 export function stopBackend() {
   clearTimeout(timer);
-  sig = meterBox = picked = null;
+  clearTimeout(aiTimer);
+  sig = meterBox = aiMeterBox = picked = null;
 }
 
 export function renderBackend(box, token, { call, setToken }) {
   const b = token.backend;
   if (!b || !b.available) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
-  const state = JSON.stringify([b.enabled, b.state, b.error, b.env_names, token.can_deploy]);
+  const a = token.ai || { available: false };
+  const state = JSON.stringify([b.enabled, b.state, b.error, b.env_names, token.can_deploy, a.available, a.enabled, a.model, a.base_url, a.limit_usd, a.period, a.key_active]);
   if (state !== sig) {
     sig = state;
     clearTimeout(timer);
+    clearTimeout(aiTimer);
     build(box, token, { call, setToken });
   }
   if (meterBox) fill(meterBox, meter(b));
+  if (aiMeterBox) fill(aiMeterBox, aiMeterContent(a));
 }
 
 // ---------- usage meter ----------
@@ -59,6 +65,7 @@ function build(box, token, ctx) {
     ? h('div', { class: 'notice bad', role: 'status' }, 'Your teacher turned your backend off, so it is not answering requests. Deploys are paused until it is turned on again.') : null;
   const error = h('div', { class: 'error', role: 'alert' });
   const body = [h('h2', {}, 'Backend'), off, meterBox];
+  aiMeterBox = null;
 
   if (b.enabled) {
     body.push(h('p', { class: 'muted small', style: 'margin:0' },
@@ -71,7 +78,10 @@ function build(box, token, ctx) {
       h('div', { class: 'small' }, 'Try it: ', h('a', { href: `${site}/api/health`, target: '_blank', rel: 'noopener' }, `${site}/api/health`), ' (counts as one run)'));
     }
     if (b.state !== 'creating') body.push(uploader(b, ctx, error));
-    if (b.state === 'ready') body.push(envSection(b, ctx, error), logsSection(ctx));
+    if (b.state === 'ready') body.push(envSection(b, ctx, error));
+    const ai = aiSection(token, ctx);
+    if (ai) body.push(ai);
+    if (b.state === 'ready') body.push(logsSection(ctx));
   }
   if (b.state !== 'none') body.push(removeButton(ctx, error));
   body.push(error);
@@ -170,6 +180,82 @@ function envSection(b, ctx, errorBox) {
     h('p', { class: 'muted small', style: 'margin:0' }, 'Use these for secrets such as database URLs or API keys. Values are write-only: the portal can never show them again.'),
     rows.length ? rows : h('div', { class: 'small muted' }, 'None yet.'),
     h('div', { class: 'form-grid' }, name, value), h('div', {}, save));
+}
+
+// ---------- class AI connector ----------
+const PER = { day: 'per day', month: 'per month', total: 'in total' };
+
+function aiMeterContent(a) {
+  const percent = a.limit_usd > 0 ? Math.min(100, (a.used_usd / a.limit_usd) * 100) : 100;
+  const cls = percent >= 100 ? 'bad' : percent >= 80 ? 'warn' : '';
+  return h('div', {},
+    h('div', { class: `bar ${cls}`, role: 'progressbar', 'aria-label': 'AI allowance used', 'aria-valuenow': Math.round(percent), 'aria-valuemin': 0, 'aria-valuemax': 100 },
+      h('span', { style: `width:${Math.max(percent, a.used_usd ? 2 : 0)}%` })),
+    h('div', { class: 'small muted', style: 'margin-top:4px' }, `${usd(a.used_usd)} of ${usd(a.limit_usd)} ${PER[a.period]}`,
+      a.approx_calls ? ` (about ${a.approx_calls.toLocaleString()} ordinary answers)` : ''),
+    percent >= 100 ? h('div', { class: 'notice bad', style: 'margin-top:8px' }, 'Your AI allowance is used up, so AI calls fail until it resets. Catch the error in your code and show a friendly message. Ask your teacher for more.') : null,
+    !a.key_active ? h('div', { class: 'notice warn', style: 'margin-top:8px' }, 'Your AI key is paused while your token is not active.') : null);
+}
+
+const AI_PYTHON = `import json, os, urllib.request
+
+def ask_ai(prompt):
+    request = urllib.request.Request(
+        os.environ["OPENAI_BASE_URL"] + "/chat/completions",
+        data=json.dumps({"model": os.environ["AI_MODEL"], "max_tokens": 300,
+                         "messages": [{"role": "user", "content": prompt}]}).encode(),
+        headers={"Authorization": "Bearer " + os.environ["OPENAI_API_KEY"], "Content-Type": "application/json"})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return json.load(response)["choices"][0]["message"]["content"]`;
+
+const AI_NODE = `export async function askAi(prompt) {
+  const response = await fetch(\`\${process.env.OPENAI_BASE_URL}/chat/completions\`, {
+    method: 'POST',
+    headers: { Authorization: \`Bearer \${process.env.OPENAI_API_KEY}\`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ model: process.env.AI_MODEL, max_tokens: 300, messages: [{ role: 'user', content: prompt }] }),
+  });
+  if (!response.ok) throw new Error(\`AI error \${response.status}\`);
+  return (await response.json()).choices[0].message.content;
+}`;
+
+function aiSection(token, ctx) {
+  const a = token.ai;
+  if (!a || !a.available) return null;
+  if (!a.enabled) {
+    return h('p', { class: 'small muted', style: 'margin:8px 0 0' }, 'Class AI is not switched on for you. If your project needs an AI model, ask your teacher: it comes with a spending cap and needs no key of your own.');
+  }
+  aiMeterBox = h('div', {});
+  fill(aiMeterBox, aiMeterContent(a));
+  scheduleAiRefresh(ctx);
+  const runtime = token.backend.runtime === 'nodejs22.x' ? 'node' : 'python';
+  const example = runtime === 'node' ? AI_NODE : AI_PYTHON;
+  return h('div', { class: 'stack' },
+    h('h2', { style: 'margin:8px 0 0' }, 'Class AI'),
+    h('p', { class: 'muted small', style: 'margin:0' },
+      'Your teacher switched on AI for your backend, with a spending cap and no key of your own. These variables are set for your function automatically: ',
+      ...a.env_names.flatMap((n, i) => [i ? ', ' : '', h('code', {}, n)]),
+      `. The model is ${a.model}. They work with any OpenAI-compatible library.`),
+    aiMeterBox,
+    h('details', {}, h('summary', {}, `Example (${runtime === 'node' ? 'Node' : 'Python'})`), h('pre', { class: 'logs' }, example)),
+    h('ul', { class: 'small muted', style: 'margin:0;padding-left:20px;display:grid;gap:2px' },
+      h('li', {}, 'Never send the key to the browser or print it in logs. Your page calls your own ', h('code', {}, '/api/…'), ' route, and that route calls the AI.'),
+      h('li', {}, `Answers take a few seconds. While AI is on your function may run up to ${a.timeout_seconds} s. Keep max_tokens small.`),
+      h('li', {}, 'When the allowance is used up, the call returns an error (HTTP 403, “Key limit exceeded”). Handle it with a friendly message.'),
+      h('li', {}, 'Your prompts are sent to the AI provider. Do not send personal or private data.')));
+}
+
+/** Usage is read from OpenRouter by the server (cached 20 s). Ask once a minute while the card is on screen. */
+function scheduleAiRefresh(ctx) {
+  clearTimeout(aiTimer);
+  aiTimer = setTimeout(async () => {
+    try {
+      const { token } = await ctx.call('/api/student/ai');
+      ctx.setToken(token);
+    } catch {
+      // a failed refresh just keeps the numbers on screen; the next tick tries again
+    }
+    if (aiMeterBox) scheduleAiRefresh(ctx);
+  }, 60000);
 }
 
 // ---------- logs ----------

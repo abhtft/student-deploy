@@ -657,6 +657,10 @@ python custom-domain/apply-tenant-api-route.py --apply    # performs it, then wa
 
 How it works: the API origin's path is `/b/{{student}}` (the tenant parameter picks the student), and the function only removes the `/api` prefix and sets `x-viewer-ip`. The target configuration is recorded in `custom-domain/tenant-distribution.json` (secret and host are placeholders; `tests/test_tenant_config.py` fails if a real secret ever appears there). The script reads the secret from the stack at run time and saves the current configuration to a temp file first (rollback: `update-distribution` with that file).
 
+## Class AI connector (optional)
+
+Gives students an AI key without them having one: a capped, revocable OpenRouter key per student, switched on by the teacher. Setup (once): create an OpenRouter **management key**, store it in Secrets Manager as secret `openrouter` with the key `OPENROUTER_MANAGEMENT_KEY`, set `AiEnabled="true"` in `samconfig.toml`, run the safe deploy routine and `node admin.mjs portal-publish`. Details, limits and troubleshooting: `docs/END_TO_END.md` sections 3.3a, 4.5c and 7. Verify with `python tests/live_smoke.py`.
+
 ## Operating it
 
 | Task | How |

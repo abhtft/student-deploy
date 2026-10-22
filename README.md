@@ -65,7 +65,9 @@ The teacher can switch a custom domain on per student (the **Domain: off / on** 
 
 ## Student backends (pilot)
 
-The teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...` (no CORS to configure). Per student the teacher has a **Backend on/off** toggle and a **run allowance** (a number of runs per day, month or in total). Student code runs in a log-only sandbox behind a gateway with an in-flight limiter that protects the rest of the AWS account. Built and tested locally; **not yet deployed** (`BackendEnabled` is `false` by default). Plan: [backend_wire.md](backend_wire.md). Setup and operations: [implement.md](implement.md) Part 4. Students: [student/BACKEND.md](student/BACKEND.md) and the starter templates in `student/backend-template/`.
+The teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...` (no CORS to configure). Per student the teacher has a **Backend on/off** toggle and a **run allowance** (a number of runs per day, month or in total). Student code runs in a log-only sandbox behind a gateway with an in-flight limiter that protects the rest of the AWS account. Deployed (`BackendEnabled="true"` in `samconfig.toml`; the template default is `false`). Plan: [backend_wire.md](backend_wire.md). Setup and operations: [implement.md](implement.md) Part 4. Students: [student/BACKEND.md](student/BACKEND.md) and the starter templates in `student/backend-template/`.
+
+**Class AI (optional, off by default):** the teacher can switch on an AI key for a student's backend: a capped, revocable OpenRouter key per student (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_MODEL` appear in the function), with a dollar cap the teacher edits and a usage meter. The platform's own management key stays in Secrets Manager. Code: `lambda/ai.py`, `lambda/openrouter.py`. Setup and rules: [docs/END_TO_END.md](docs/END_TO_END.md) sections 3.3a and 4.5c; students: [student/BACKEND.md](student/BACKEND.md).
 
 ## One-time setup (about 20 min)
 

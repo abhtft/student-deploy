@@ -1,4 +1,4 @@
-import { api, ApiError, ask, copyText, date, duration, expiryBar, h, now, session, statusPill, toast } from './common.js';
+import { api, ApiError, ask, copyText, date, duration, expiryBar, h, now, session, statusPill, toast, usd } from './common.js';
 
 const $ = (id) => document.getElementById(id);
 const DURATIONS = [[7, '7 days'], [14, '14 days'], [30, '30 days'], [60, '60 days'], [90, '90 days'], [180, '180 days']];
@@ -59,13 +59,15 @@ function tokenRow(t) {
       t.regen.state === 'pending' ? h('span', { class: 'pill warn' }, 'Regeneration requested') : null),
       h('div', { class: 'small muted', style: 'margin-top:4px' }, `Token …${t.hint} · ${t.last_deploy_at ? `last deploy ${date(t.last_deploy_at)}` : 'never deployed'}`),
       t.custom_domain.domain ? h('div', { class: 'small muted', style: 'margin-top:2px' }, `Custom domain: ${t.custom_domain.domain} (${t.custom_domain.state.replace('_', ' ')})`) : null,
-      backendLine(t)),
+      backendLine(t), aiLine(t)),
     expiryBar(t),
     h('div', { class: 'btns' },
       live && t.custom_domain.available ? btn(t.custom_domain.enabled ? 'Domain: on' : 'Domain: off', () => toggleDomain(t)) : null,
       live && t.backend.available ? btn(t.backend.enabled ? 'Backend: on' : 'Backend: off', () => toggleBackend(t)) : null,
       live && t.backend.available && (t.backend.enabled || t.backend.usage) ? btn('Runs…', () => editRuns(t)) : null,
       live && t.backend.available && t.backend.enabled ? btn('+1,000', () => addRuns(t)) : null,
+      live && t.backend.available && t.ai.available ? btn(t.ai.enabled ? 'AI: on' : 'AI: off', () => toggleAi(t)) : null,
+      live && t.ai.available && t.ai.enabled ? btn('AI cap…', () => editAi(t)) : null,
       live ? btn('Extend', () => extend(t)) : null,
       live && !t.archived ? btn('Take offline', () => offline(t)) : null,
       live ? btn('Revoke', () => revoke(t), 'danger') : null));
@@ -107,6 +109,34 @@ function backendLine(t) {
   const usage = u ? ` · ${u.used.toLocaleString()} / ${u.limit.toLocaleString()} runs (${u.period})` : '';
   const state = b.state === 'none' ? 'no function yet' : b.state;
   return h('div', { class: `small ${u && u.limit > 0 && u.used >= u.limit ? '' : 'muted'}`, style: 'margin-top:2px' }, `Backend: ${b.enabled ? 'on' : 'off'} (${state})${usage}`);
+}
+
+const PER = { day: 'per day', month: 'per month', total: 'in total' };
+
+function aiLine(t) {
+  const a = t.ai;
+  if (!a.available || !a.enabled) return null;
+  const spent = a.limit_usd > 0 && a.used_usd >= a.limit_usd;
+  const calls = a.approx_calls ? ` (about ${a.approx_calls.toLocaleString()} answers)` : '';
+  const paused = a.key_active ? '' : ' · paused while the token is not active';
+  return h('div', { class: `small ${spent ? '' : 'muted'}`, style: 'margin-top:2px' },
+    `AI: on · ${a.model} · ${usd(a.used_usd)} of ${usd(a.limit_usd)} ${PER[a.period]}${calls}${paused}`);
+}
+
+async function toggleAi(t) {
+  const enabled = !t.ai.enabled;
+  act(`/api/admin/tokens/${t.id}/ai`, { enabled },
+    enabled ? `AI switched on for ${t.slug}: a ${usd(t.ai.limit_usd)} ${PER[t.ai.period]} cap` : `AI switched off for ${t.slug}: the key is disabled now`);
+}
+
+async function editAi(t) {
+  const a = t.ai;
+  const r = await ask({ title: `AI allowance for ${t.slug}`,
+    text: `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Usage is counted a few seconds late.`,
+    fields: [{ name: 'limit_usd', label: 'Spending cap (USD)', type: 'number', value: a.limit_usd, min: 0.01, max: 20, step: 0.01, required: true },
+      { name: 'period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: a.period },
+      { name: 'model', label: 'Model (empty = class default)', value: a.model, placeholder: 'anthropic/claude-haiku-5.5', maxlength: 80 }], confirm: 'Save' });
+  if (r) act(`/api/admin/tokens/${t.id}/ai`, { limit_usd: Number(r.limit_usd), period: r.period, model: r.model.trim() }, 'AI allowance saved');
 }
 
 async function toggleBackend(t) {

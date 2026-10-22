@@ -215,6 +215,8 @@ def publish(item, now):
         raise PortalError(400, "Upload is not a valid zip file.")
 
     b, name, lam = settings(item), function_name(slug), client("lambda")
+    import ai
+    ai_vars = ai.env_for(item)  # the class AI connector, when the teacher has switched it on for this student
     try:
         if b.get("function_name"):
             if b.get("runtime") and b["runtime"] != runtime:
@@ -223,13 +225,15 @@ def publish(item, now):
         else:
             lam.create_function(
                 FunctionName=name, Runtime=runtime, Role=os.environ["SANDBOX_ROLE_ARN"], Handler=handler,
-                Code={"S3Bucket": bucket, "S3Key": key}, MemorySize=MEMORY_MB, Timeout=TIMEOUT_SECONDS,
-                Description=f"Student backend for {slug}", Tags={"managed-by": "student-deploy", "slug": slug})
+                Code={"S3Bucket": bucket, "S3Key": key}, MemorySize=MEMORY_MB, Timeout=ai.timeout_for(item),
+                Description=f"Student backend for {slug}", Tags={"managed-by": "student-deploy", "slug": slug},
+                **({"Environment": {"Variables": ai_vars}} if ai_vars else {}))
             _prepare_function(name, b.get("enabled", False))
     except ClientError as e:
         raise PortalError(502, f"Could not deploy your backend: {e.response['Error'].get('Message', 'AWS error')}")
+    extra = {"env_names": sorted(ai_vars)} if ai_vars and not b.get("function_name") else {}
     return _save(item, state="creating", runtime=runtime, handler=handler, function_name=name,
-                 pending_sha=hashlib.sha256(body).hexdigest(), error="")
+                 pending_sha=hashlib.sha256(body).hexdigest(), error="", **extra)
 
 
 def _prepare_function(name, enabled):
@@ -291,6 +295,9 @@ def set_env(item, var, value, now):
     _require_can_deploy(item, now)
     name = _require_ready(item)
     var, value = str(var or ""), str(value if value is not None else "")
+    import ai
+    if ai.reserved_name(item, var):
+        raise PortalError(400, f"{var} is set by the class AI connector while it is on for you. Ask your teacher to switch it off to use your own.")
     if not ENV_NAME_RE.match(var) or var.startswith(ENV_RESERVED) or var in ENV_RESERVED_NAMES:
         raise PortalError(400, "Use a name with letters, digits and underscores, starting with a letter (not AWS_*, LAMBDA_* or TZ).")
     if len(value) > 1024:
@@ -305,6 +312,9 @@ def set_env(item, var, value, now):
 def delete_env(item, var, now):
     _require_can_deploy(item, now)
     name = _require_ready(item)
+    import ai
+    if ai.reserved_name(item, var):
+        raise PortalError(400, f"{var} is set by the class AI connector and cannot be removed while it is on for you.")
     variables = _current_env(name)
     variables.pop(var, None)
     return _write_env(item, name, variables)

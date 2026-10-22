@@ -12,6 +12,7 @@ Teacher (password -> signed session, 8 h):
   POST /api/admin/tokens/{id}/deny       {reason?}
   POST /api/admin/tokens/{id}/domain-access   {enabled}   switch custom domains on/off for a student
   POST /api/admin/tokens/{id}/backend    {enabled?, runs_limit?, runs_period?}   backend on/off and run allowance
+  POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?}   class AI connector (ai.py); {} refreshes usage
 
 Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/login                {token}
@@ -21,6 +22,7 @@ Student (the token itself is the login -> signed session, 12 h):
   PUT/DELETE /api/student/domain, GET /api/student/domain/status   custom domain (see domains.py)
   GET/DELETE /api/student/backend, POST .../backend/upload-url|publish, PUT .../backend/env, DELETE .../backend/env/<NAME>,
   GET .../backend/logs                                              student backend (see backends.py; runs behind gateway.py)
+  GET  /api/student/ai                   refresh the AI usage numbers (ai.py)
 
 A token is active until expires_at, "expired" (read-only) for GRACE_DAYS, then "offline".
 Only a SHA-256 of each token is stored. Teacher and student sessions use different signing keys.
@@ -310,12 +312,18 @@ def view(item, now, site_url):
         "can_request_regen": status != "revoked" and (status == "offline" or now >= item["expires_at"] - WARN_DAYS * DAY) and regen["state"] != "pending",
         "custom_domain": domain_view(item),
         "backend": backend_view(item, now),
+        "ai": ai_view(item, now),
     }
 
 
 def backend_view(item, now):
     import backends
     return backends.view(item, now)
+
+
+def ai_view(item, now):
+    import ai
+    return ai.view(item, now)
 
 
 DOMAIN_MESSAGES = {
@@ -421,6 +429,9 @@ def dispatch(method, path, body, event, now, site_url):
         return reply(200, token=view(student_token(event, now), now, site_url))
     if path == "/api/student/backend" or path.startswith("/api/student/backend/"):
         return student_backend(method, path, body, event, now, site_url)
+    if (method, path) == ("GET", "/api/student/ai"):
+        import ai
+        return reply(200, token=view(ai.refresh_usage(student_token(event, now), now), now, site_url))
     if path in ("/api/student/domain", "/api/student/domain/status") and method in ("PUT", "DELETE", "GET"):
         import domains
         item = student_token(event, now)
@@ -449,6 +460,11 @@ def dispatch(method, path, body, event, now, site_url):
         if method == "POST" and backend:
             import backends
             item = backends.set_backend(get_token(backend.group(1)), body, now)
+            return reply(200, token=view(item, now, site_url))
+        ai_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/ai", path)
+        if method == "POST" and ai_route:
+            import ai
+            item = ai.set_ai(get_token(ai_route.group(1)), body, now)
             return reply(200, token=view(item, now, site_url))
         access = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/domain-access", path)
         if method == "POST" and access:
@@ -578,7 +594,13 @@ def sweep(now=None):
         import domains
         removed, failed_removals = domains.finish_pending_removals()
         failed += failed_removals
-    return {"archived": done, "failed": failed, "domains_removed": removed}
+    import ai
+    ai_result = ai.sweep(now)  # disables the AI key of every student who is no longer active (and re-enables after an extension)
+    failed += ai_result["failed"]
+    result = {"archived": done, "failed": failed, "domains_removed": removed}
+    if ai_result["changed"]:
+        result["ai_keys_changed"] = ai_result["changed"]
+    return result
 
 
 def token_action(item, action, body, now, site_url):
@@ -601,6 +623,8 @@ def token_action(item, action, body, now, site_url):
         else:
             reason = str(body.get("reason") or "").strip()[:300]
             item = db().update(item["pk"], {"regen": {**regen, "state": "denied", "resolved_at": now, "reason": reason}})
+    import ai
+    item = ai.sync_lifecycle(item, now)  # revoke/offline/expiry disable the student's AI key; extend/approve enable it again
     return reply(200, token=view(item, now, site_url))
 
 

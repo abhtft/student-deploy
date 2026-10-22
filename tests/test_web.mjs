@@ -8,6 +8,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { analyzeBackend } from '../web/backend-check.js';
 import { analyze } from '../web/check.js';
+import { usd } from '../web/common.js';
 import { buildZip } from '../web/zip.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -133,3 +134,8 @@ print("ok")`;
   rmSync(dir, { recursive: true, force: true });
 }
 console.log('test_web.mjs: all passed');
+
+// dollar amounts on the AI cards: never round a tiny amount to $0.00, always two decimals for round amounts
+for (const [n, want] of [[0, '$0.00'], [0.25, '$0.25'], [0.5, '$0.50'], [0.1, '$0.10'], [0.0123, '$0.0123'], [0.000095, '$0.0001'], [12.5, '$12.50'], [20, '$20.00']]) {
+  assert.equal(usd(n), want, `usd(${n})`);
+}

@@ -2,6 +2,7 @@
 import io
 import json
 import os
+import re
 import time
 
 from botocore.exceptions import ClientError
@@ -191,7 +192,8 @@ class FakeLambda:
         self.functions[name] = {
             "zip": store[kw["Code"]["S3Key"]]["Body"], "polls": 0, "updating": False, "concurrency": None, "tags": kw.get("Tags", {}),
             "config": {"FunctionName": name, "Runtime": kw["Runtime"], "Handler": kw["Handler"], "Role": kw["Role"],
-                       "MemorySize": kw["MemorySize"], "Timeout": kw["Timeout"], "State": "Pending", "Environment": {"Variables": {}}},
+                       "MemorySize": kw["MemorySize"], "Timeout": kw["Timeout"], "State": "Pending",
+                       "Environment": kw.get("Environment") or {"Variables": {}}},
         }
 
     def update_function_code(self, FunctionName, S3Bucket, S3Key):
@@ -215,11 +217,15 @@ class FakeLambda:
     def get_function_configuration(self, FunctionName):
         return dict(self._get(FunctionName)["config"])
 
-    def update_function_configuration(self, FunctionName, Environment):
+    def update_function_configuration(self, FunctionName, Environment=None, Timeout=None):
         function = self._get(FunctionName)
         if function["updating"]:
             raise self._error("ResourceConflictException", "update in progress")
-        function["config"]["Environment"] = Environment
+        if Environment is not None:
+            function["config"]["Environment"] = Environment
+        if Timeout is not None:
+            function["config"]["Timeout"] = Timeout
+        self.calls.append(("update_function_configuration", FunctionName))
 
     def delete_function(self, FunctionName):
         self._get(FunctionName)
@@ -315,3 +321,53 @@ class FakeLambda:
         lines = done.stdout.splitlines()
         result = next(json.loads(l[len("__RESULT__"):]) for l in reversed(lines) if l.startswith("__RESULT__"))
         return result, "\n".join(l for l in lines if not l.startswith("__RESULT__"))
+
+
+class FakeOpenRouter:
+    """Stands in for openrouter.ai: the key-management API with metering. Plug it into openrouter.transport.
+    Mirrors what the live spike showed: only a management key may manage keys; expires_at cannot be patched; a patch with no
+    known field is a 400; usage is added with spend()."""
+
+    def __init__(self, management_key="mgmt-secret"):
+        self.management_key, self.keys, self.calls, self.fail, self._n = management_key, {}, [], None, 0
+
+    @staticmethod
+    def data(k):
+        return {"hash": k["hash"], "name": k["name"], "limit": k["limit"], "limit_reset": k["limit_reset"], "disabled": k["disabled"],
+                "usage": k["usage"], "limit_remaining": None if k["limit"] is None else max(k["limit"] - k["usage"], 0)}
+
+    def spend(self, key_hash, usd):
+        self.keys[key_hash]["usage"] += usd
+
+    def by_name(self, name):
+        return next((k for k in self.keys.values() if k["name"] == name), None)
+
+    def __call__(self, method, path, token, body):
+        self.calls.append((method, path, body))
+        if self.fail:
+            return self.fail[0], {"error": {"message": self.fail[1]}}
+        if token != self.management_key:
+            return 403, {"error": {"message": "Only management keys can perform this operation"}}
+        if (method, path) == ("POST", "/keys"):
+            assert isinstance(body["limit"], (int, float)) and body["limit_reset"] in (None, "daily", "weekly", "monthly"), body
+            self._n += 1
+            k = {"hash": f"h{self._n:03d}", "key": f"sk-or-v1-fake-{self._n:03d}", "name": body["name"], "limit": body["limit"],
+                 "limit_reset": body["limit_reset"], "disabled": False, "usage": 0.0}
+            self.keys[k["hash"]] = k
+            return 201, {"data": self.data(k), "key": k["key"]}
+        found = re.fullmatch(r"/keys/(\w+)", path)
+        k = self.keys.get(found.group(1)) if found else None
+        if not k:
+            return 404, {"error": {"message": "Key not found"}}
+        if method == "GET":
+            return 200, {"data": self.data(k)}
+        if method == "DELETE":
+            del self.keys[k["hash"]]
+            return 200, {"deleted": True}
+        if method == "PATCH":
+            known = {f: v for f, v in body.items() if f in ("limit", "limit_reset", "disabled")}
+            if not known:
+                return 400, {"error": {"message": "No update fields provided"}}
+            k.update(known)
+            return 200, {"data": self.data(k)}
+        return 405, {"error": {"message": "bad method"}}

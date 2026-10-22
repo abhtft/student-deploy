@@ -63,6 +63,18 @@ Body, any of:
 
 → `200 { "token": <view> }`. `400` invalid value; `503` backends are not set up on this server.
 
+### `POST /api/admin/tokens/{id}/ai`
+Class AI connector (needs `AiEnabled`; see END_TO_END.md section 3.3a). Body, any of:
+
+| Field | Type | Notes |
+|---|---|---|
+| `enabled` | boolean | ON creates (or re-enables) the student's capped OpenRouter key and sets `OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_MODEL` on the function with a 25 s timeout; OFF disables the key first, then removes them |
+| `limit_usd` | number 0.01 to 20 | spending cap; the first time on it defaults to `AiDefaultLimitUsd` |
+| `period` | `"day"`, `"month"` or `"total"` | when the cap resets |
+| `model` | string | an OpenRouter model id; empty means the class default |
+
+An empty body refreshes the usage numbers. → `200 { "token": <view> }`. `400` invalid value; `409` the student's function is updating (repeat the same request); `502` OpenRouter refused; `503` the connector is not set up.
+
 `{id}` is the token's `id` (a 64-character hex string) from the token view.
 
 ---
@@ -96,6 +108,10 @@ Flow: `upload-url`, then `PUT` the zip bytes to `uploadUrl` (no extra headers ne
 | `DELETE /api/student/domain` | none | starts removal; returns the view (state `removing`, then none) |
 
 `custom_domain.state` in the view: `none` → `waiting_dns` → `issuing_certificate` → `finishing` → `live` (and `removing`). `cname_target` is the record to create.
+
+### Class AI usage
+
+`GET /api/student/ai` returns `200 { "token": <view> }` with fresh usage (read from OpenRouter, cached 20 s). The student page asks once a minute.
 
 ### Backend
 
@@ -153,6 +169,14 @@ Returned by almost every route above (`token`, `item`, or inside lists).
   }
 }
 ```
+`ai` (always present; `{ "available": false }` when the connector is not deployed):
+```json
+"ai": { "available": true, "enabled": true, "model": "anthropic/claude-haiku-5.5", "base_url": "https://openrouter.ai/api/v1",
+        "limit_usd": 0.25, "period": "month", "used_usd": 0.0123, "remaining_usd": 0.2377, "approx_calls": 714,
+        "checked_at": 1792600000, "env_names": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "AI_MODEL"], "timeout_seconds": 25, "key_active": true }
+```
+The key itself is never returned. `approx_calls` is shown only for the default model. While the connector is on, the three `env_names` are reserved: `PUT`/`DELETE` of them on the backend env routes answer `400`.
+
 `status` meaning: `active` until `expires_at`; `expired` (read-only) until `offline_at`; then `offline`. An archived site counts as `offline`. When the backend feature is not deployed, `backend` is just `{ "available": false }`.
 
 ---

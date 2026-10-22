@@ -66,6 +66,16 @@ await step('operations: versioning, budget and alarms are in place (no email in 
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('class AI connector: template keeps it off by default and the management key out of reach', () => {
+  const r = spawnSync(python, [join(here, 'test_template_ai.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('class AI connector: capped keys, function environment, lifecycle, failures, no key exposed', () => {
+  const r = spawnSync(python, [join(here, 'test_ai.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
