@@ -68,7 +68,7 @@ The teacher can let a student host a small function (Node 22 or Python 3.12) tha
 
 ## One-time setup (about 20 min)
 
-Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 18+.
+Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 22+.
 
 ### 1. Pick the URL style
 

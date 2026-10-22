@@ -1,6 +1,7 @@
 // Tests for web/check.js (folder checks) and web/zip.js (zip builder). The zip is verified by the real Lambda validation.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { webcrypto as crypto } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';

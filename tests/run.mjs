@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Local test suite - no AWS needed.  Usage: node tests/run.mjs   (needs Node 18+, Python 3 + boto3)
+// Local test suite - no AWS needed.  Usage: node tests/run.mjs   (needs Node 22+, Python 3 + boto3)
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';

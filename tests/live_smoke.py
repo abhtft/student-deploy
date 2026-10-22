@@ -74,7 +74,7 @@ def zip_bytes(files):
 
 def template(flavor):
     folder = os.path.join(ROOT, flavor)
-    return {n: open(os.path.join(folder, n), encoding="utf8").read() for n in os.listdir(folder)}
+    return {n: open(os.path.join(folder, n), encoding="utf8").read() for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n))}
 
 
 def set_backend_fields(**fields):

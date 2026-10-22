@@ -393,7 +393,7 @@ for flavor, runtime in (("python", "python3.12"), ("node", "nodejs22.x")):
     if flavor == "node" and not shutil.which("node"):
         continue
     folder = os.path.join(template_root, flavor)
-    files = {n: open(os.path.join(folder, n), encoding="utf8").read() for n in os.listdir(folder)}
+    files = {n: open(os.path.join(folder, n), encoding="utf8").read() for n in os.listdir(folder) if os.path.isfile(os.path.join(folder, n))}
     sid, session, slug = new_student(f"tmpl-{flavor}")
     teacher(sid, enabled=True)
     assert deploy(session, slug, files) == "ready" and backend_of(session)["runtime"] == runtime, flavor

@@ -34,7 +34,7 @@ cd infra/student-deploy
 
 These run the **real** `deploy.mjs` and the **real** Lambda code against an in-memory fake of S3/SSM/CloudFront, plus the real CloudFront routing function from `template.yaml`.
 
-Needs Node 18+ and Python 3 with boto3:
+Needs Node 22+ and Python 3 with boto3:
 
 ```
 pip install boto3
