@@ -22,7 +22,8 @@ jobs:
         with:
           python-version: '3.12'
       - run: pip install boto3 cfn-lint
-      - name: Template lint (W1030: the CertificateArn parameter is a plain string on purpose)
+      # W1030 is ignored because CertificateArn is a plain string parameter on purpose
+      - name: Template lint
         run: cfn-lint -i W1030 -t template.yaml
       - name: Local test suite
         run: node tests/run.mjs
