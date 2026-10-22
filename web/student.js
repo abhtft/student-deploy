@@ -1,6 +1,7 @@
 import { analyze, LIMITS, skippedFolders } from './check.js';
 import { api, ApiError, ask, date, duration, expiryBar, fill, h, now, session, statusPill, toast } from './common.js';
 import { renderBackend, stopBackend } from './backend.js';
+import { renderGithub, stopGithub } from './github.js';
 import { buildZip } from './zip.js';
 
 const $ = (id) => document.getElementById(id);
@@ -21,6 +22,7 @@ function signOut(message = '') {
   token = picked = deployMode = domainSig = null;
   clearTimeout(domainTimer);
   stopBackend();
+  stopGithub();
   show(false);
   $('login-error').textContent = message;
 }
@@ -51,6 +53,7 @@ function render() {
   renderDeploy();
   renderDomain();
   renderBackend($('backend'), token, { call, setToken: (next) => { token = next; render(); } });
+  renderGithub($('github'), token);
 }
 
 function banner() {

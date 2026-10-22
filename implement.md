@@ -515,7 +515,7 @@ curl.exe -sI https://deploy.margdarshakss.com/
 | Task | How |
 |---|---|
 | Create, extend, revoke, take offline, approve | The teacher page |
-| Update the pages | Edit `web/`, then `node admin.mjs portal-publish` |
+| Update the pages (and the student downloads in `portal-downloads.json`) | Edit `web/` or the source file, then `node admin.mjs portal-publish` |
 | Change the teacher password | `node admin.mjs teacher-setup yourname` |
 | See archived (offline) sites | `aws s3 ls s3://BUCKET/archive/`. They are never deleted automatically; remove one with `aws s3 rm s3://BUCKET/archive/NAME --recursive` |
 | Watch the daily sweep | `sam logs --stack-name student-hosting --name SweeperFunction` |

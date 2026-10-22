@@ -1,7 +1,7 @@
 // End to end for student/portal-deploy.mjs: the real CLI -> the whole dev server (real portal, gateway and Lambda code on in-memory AWS).
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,6 +83,14 @@ try {
     assert.match(noBuildRun.stderr, /No build folder/);
     assert.doesNotMatch(noBuildRun.stdout, /publishing/);
   });
+
+  // the files the student page offers are served by the portal, byte for byte as in the repo
+  const downloads = JSON.parse(readFileSync(join(root, 'portal-downloads.json'), 'utf8'));
+  for (const [name, source] of Object.entries(downloads)) {
+    const served = await (await fetch(`${URL}/${name}`)).text();
+    const norm = (text) => text.replace(/\r\n/g, '\n');
+    check(`download ${name} is served and matches ${source}`, () => assert.equal(norm(served), norm(readFileSync(join(root, source), 'utf8'))));
+  }
 
   // 3. refusals each give a clear message and a failing exit code
   const frontOnly = project('bob', { backend: false });

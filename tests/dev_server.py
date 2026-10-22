@@ -27,6 +27,7 @@ import portal  # noqa: E402
 from fakes import FakeLambda, FakeLogs, FakeS3, FakeSSM, FakeTenantCloudFront, store  # noqa: E402
 
 WEB = os.path.join(here, "..", "web")
+DOWNLOADS = json.load(open(os.path.join(here, "..", "portal-downloads.json"), encoding="utf8"))
 
 
 class DevTenantCloudFront(FakeTenantCloudFront):
@@ -168,6 +169,9 @@ class Handler(BaseHTTPRequestHandler):
             return self.api("GET")
         name = self.path.split("?")[0].lstrip("/") or "index.html"
         path = os.path.normpath(os.path.join(WEB, name))
+        if name in DOWNLOADS:  # the student downloads, published next to the pages (see portal-downloads.json)
+            path = os.path.normpath(os.path.join(here, "..", DOWNLOADS[name]))
+            return self.send(200, open(path, "rb").read(), "text/plain; charset=utf-8")
         if not path.startswith(os.path.normpath(WEB)) or not os.path.isfile(path):
             return self.send(404, b"Not found", "text/plain")
         ctype = mimetypes.guess_type(path)[0] or "application/octet-stream"

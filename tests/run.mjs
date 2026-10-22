@@ -71,6 +71,11 @@ await step('web: folder checks and zip builder (zip validated by the Lambda code
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('student downloads: published files, the card and both workflows agree', () => {
+  const r = spawnSync('node', [join(here, 'test_downloads.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student CLI: portal-deploy.mjs publishes backend and frontend with a token', () => {
   const r = spawnSync('node', [join(here, 'test_portal_cli.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

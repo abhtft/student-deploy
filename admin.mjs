@@ -10,7 +10,7 @@
 // STACK_NAME (default "student-hosting") selects the deployed stack.
 import { execFileSync } from 'node:child_process';
 import { randomBytes, scryptSync } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,12 +71,19 @@ if (command === 'add') {
   for (const name of Object.keys(keys).sort()) console.log(`${name.padEnd(20)} ${siteUrl(name)}`);
   console.log(`\n${Object.keys(keys).length} students, parameter uses ${JSON.stringify(keys).length}/4096 bytes`);
 } else if (command === 'portal-publish') {
-  const web = join(dirname(fileURLToPath(import.meta.url)), 'web');
-  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
-  const files = readdirSync(web).filter((f) => statSync(join(web, f)).isFile());
-  for (const file of files) {
+  const root = dirname(fileURLToPath(import.meta.url));
+  const web = join(root, 'web');
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.yml': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
+  // Pages from web/, plus the student downloads (portal-downloads.json maps published name -> source file, so each has one source of truth).
+  const downloads = JSON.parse(readFileSync(join(root, 'portal-downloads.json'), 'utf8'));
+  const uploads = [
+    ...readdirSync(web).filter((f) => statSync(join(web, f)).isFile()).map((f) => [f, join(web, f)]),
+    ...Object.entries(downloads).map(([name, source]) => [name, join(root, source)]),
+  ];
+  const files = uploads.map(([name]) => name);
+  for (const [file, path] of uploads) {
     // Explicit content types: the AWS CLI guesses from the Windows registry, which can label .js as text/plain.
-    aws('s3', 'cp', join(web, file), `s3://${outputs.BucketName}/portal/${file}`, '--content-type', TYPES[extname(file)] ?? 'application/octet-stream', '--cache-control', 'no-cache');
+    aws('s3', 'cp', path, `s3://${outputs.BucketName}/portal/${file}`, '--content-type', TYPES[extname(file)] ?? 'application/octet-stream', '--cache-control', 'no-cache');
   }
   const listed = JSON.parse(aws('s3api', 'list-objects-v2', '--bucket', outputs.BucketName, '--prefix', 'portal/', '--query', 'Contents[].Key') || 'null') ?? [];
   for (const key of listed.filter((k) => !files.includes(k.slice('portal/'.length)))) aws('s3', 'rm', `s3://${outputs.BucketName}/${key}`);
