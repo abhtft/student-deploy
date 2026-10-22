@@ -59,6 +59,11 @@ await step('custom domains: tenant distribution config routes /api/* to the back
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('operations: versioning, budget and alarms are in place (no email in the repo)', () => {
+  const r = spawnSync(python, [join(here, 'test_template_ops.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

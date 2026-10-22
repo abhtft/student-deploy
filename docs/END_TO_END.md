@@ -246,8 +246,37 @@ If the tenant distribution is ever recreated, redo its `/api` route with `custom
 
 ### 4.5 Configuration reference
 
-Template parameters (`samconfig.toml`): `RootDomain`, `CertificateArn`, `PortalAlias`, `TenantDistributionId`, `RoutingEndpoint`, `BackendEnabled`, `OfflineGraceDays`, `KeysParameterName`, `TeacherParameterName`.
+Template parameters (`samconfig.toml`): `AlertEmailParameter`, `ConcurrencyAlarmThreshold`, `RootDomain`, `CertificateArn`, `PortalAlias`, `TenantDistributionId`, `RoutingEndpoint`, `BackendEnabled`, `OfflineGraceDays`, `KeysParameterName`, `TeacherParameterName`.
 Lambda environment (set for every function through `Globals`): `BUCKET`, `DISTRIBUTION_ID`, `DISTRIBUTION_DOMAIN`, `ROOT_DOMAIN`, `KEYS_PARAM`, `TOKENS_TABLE`, `TEACHER_PARAM`, `OFFLINE_GRACE_DAYS`, `TENANT_DISTRIBUTION_ID`, `ROUTING_ENDPOINT`, `BACKEND_ENABLED`, `SANDBOX_ROLE_ARN`, `BACKEND_RESERVED_CONCURRENCY` (0: not usable at an account limit of 10), `INFLIGHT_GLOBAL` (3), `INFLIGHT_STUDENT` (2), `PER_IP_PER_MINUTE` (120), `ORIGIN_SECRET` (derived from the stack ID).
+
+### 4.5a Alerts (cost budget and alarms)
+
+One SNS topic emails one address (error alarms only; cost budgets are set up separately in the AWS console). The address is the SSM String parameter `/student-deploy/alert-email` (named in `samconfig.toml` as `AlertEmailParameter`; the address itself is never committed). To change it: `aws ssm put-parameter --name /student-deploy/alert-email --value <new> --overwrite`, then redeploy; AWS emails a confirmation link that must be clicked once, otherwise nothing arrives (the subscription shows `PendingConfirmation`).
+
+| Alert | Fires when | What to do |
+|---|---|---|
+| `lambda-concurrency-near-limit` | account-wide concurrency reaches `ConcurrencyAlarmThreshold` (8 of 10) | other apps in the account can be throttled; use the **Backend: off** button for the busiest student |
+| `lambda-throttles` | 5 or more throttled invocations in 5 minutes | same as above |
+| `portal-function-errors`, `backend-gateway-errors` | the platform code crashed (an unhandled error) | read that function's CloudWatch logs |
+| `sweeper-errors` | the daily sweeper failed on a site or domain (it retries next day) | read the sweeper logs |
+| `backend-5xx` | 20 or more 5xx answers from student backends in 5 minutes | read the logs of the busiest `sd-*` function |
+
+After the Lambda quota increase is granted, raise `ConcurrencyAlarmThreshold` (for example 800) in `samconfig.toml`. Alarms are quiet when there is no data. Test one safely with `aws cloudwatch set-alarm-state --alarm-name <name> --state-value ALARM --state-reason test`; it returns to OK by itself.
+
+### 4.5b Recovering a file (S3 versioning)
+
+The site bucket keeps old versions: an overwritten or deleted site file is recoverable for **30 days**. Uploaded zips (`uploads/`) are removed after 1 day, with their old versions. CloudFront and the Lambdas only see the current version.
+
+```bash
+# list versions of one file (a delete shows up as a DeleteMarker)
+aws s3api list-object-versions --bucket <bucket> --prefix sites/alice/index.html
+# restore: copy the wanted version over the current one
+aws s3api copy-object --bucket <bucket> --key sites/alice/index.html --copy-source "<bucket>/sites/alice/index.html?versionId=<VersionId>"
+# if the file was deleted: remove its DeleteMarker, which brings the previous version back
+aws s3api delete-object --bucket <bucket> --key sites/alice/index.html --version-id <DeleteMarker VersionId>
+```
+
+The bucket name is the physical id of `SitesBucket` in the stack. Pages already cached by CloudFront show the restored file after the cache expires, or after an invalidation. Verified live: two writes, a delete, then a restore returned the latest content.
 
 ### 4.6 Limits at a glance
 
@@ -333,7 +362,7 @@ A response from the platform's gateway is always JSON `{"error": "<code>"}`. An 
 
 ## 8. Costs
 
-Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): a class costs a few cents to a few dollars a month. The run allowance bounds backend compute per student (the default 5,000 runs of at most 10 s at 256 MB is roughly $0.17 per student per month at the very worst, approximate). Custom-domain tenant pricing is **not verified**: a community report says the first 10 tenants are free; check the billing console. Recommended: an AWS Budget with email alerts before widening access.
+Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): a class costs a few cents to a few dollars a month. The run allowance bounds backend compute per student (the default 5,000 runs of at most 10 s at 256 MB is roughly $0.17 per student per month at the very worst, approximate). Custom-domain tenant pricing is **not verified**: a community report says the first 10 tenants are free; check the billing console. Cost alerts come from the account's own AWS Budget (not managed here); error alarms are in section 4.5a. Versioned buckets keep old versions for 30 days, which adds a small storage cost.
 
 ---
 

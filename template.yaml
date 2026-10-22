@@ -51,6 +51,17 @@ Parameters:
     Description: >
       Student backends (backend_wire.md): the Backend API, the gateway function and the /api/* route on the student distribution.
       Keep 'false' until the pilot is ready. The sandbox role below is always created but only lets a function write its own logs.
+  AlertEmailParameter:
+    Type: String
+    Default: ''
+    Description: >
+      Name of an SSM String parameter that holds the email address for cost and error alerts (for example /student-deploy/alert-email).
+      The address itself stays in AWS, never in this repository. Leave empty to create no alerts.
+  ConcurrencyAlarmThreshold:
+    Type: Number
+    Default: 8
+    MinValue: 1
+    Description: Alarm when account-wide Lambda concurrency reaches this many executions. 8 suits the current limit of 10; raise it (for example to 800) after the quota increase to 1000 is granted.
   OfflineGraceDays:
     Type: Number
     Default: 3
@@ -68,6 +79,8 @@ Conditions:
   UseCustomDomain: !Not [!Equals [!Ref RootDomain, '']]
   UsePortalAlias: !And [!Condition UseCustomDomain, !Equals [!Ref PortalAlias, 'true']]
   UseBackend: !Equals [!Ref BackendEnabled, 'true']
+  UseAlerts: !Not [!Equals [!Ref AlertEmailParameter, '']]
+  UseAlertsAndBackend: !And [!Condition UseAlerts, !Condition UseBackend]
 
 Globals:
   Function:
@@ -111,12 +124,27 @@ Resources:
               - [!Sub 'https://deploy.${RootDomain}']
               - ['*']
             MaxAge: 3600
+      # Versioning is the undo button: an overwritten or deleted site file stays recoverable for 30 days (see docs/END_TO_END.md,
+      # "Recovering a file"). CloudFront and the Lambdas only ever see the current version, so nothing else changes.
+      VersioningConfiguration:
+        Status: Enabled
       LifecycleConfiguration:
         Rules:
           - Id: ExpireUploadedZips
             Prefix: uploads/
             Status: Enabled
             ExpirationInDays: 1
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 1
+          - Id: ExpireOldVersions
+            Status: Enabled
+            NoncurrentVersionExpiration:
+              NoncurrentDays: 30
+            AbortIncompleteMultipartUpload:
+              DaysAfterInitiation: 2
+          - Id: CleanUpDeleteMarkers
+            Status: Enabled
+            ExpiredObjectDeleteMarker: true
 
   SitesBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -636,6 +664,150 @@ Resources:
           Properties:
             Schedule: cron(0 3 * * ? *)
 
+  # ---------- Operations safety nets: alarms (every alert goes to one email through one SNS topic) ----------
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Condition: UseAlerts
+    Properties:
+      DisplayName: Student hosting alerts
+
+  AlertsTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Condition: UseAlerts
+    Properties:
+      Topics: [!Ref AlertsTopic]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: AccountOwnerMayManageAndPublish
+            Effect: Allow
+            Principal:
+              AWS: '*'
+            Action: [SNS:Publish, SNS:Subscribe, SNS:GetTopicAttributes, SNS:ListSubscriptionsByTopic]
+            Resource: !Ref AlertsTopic
+            Condition:
+              StringEquals:
+                AWS:SourceOwner: !Ref AWS::AccountId
+          - Sid: CloudWatchAlarmsMayPublish
+            Effect: Allow
+            Principal:
+              Service: cloudwatch.amazonaws.com
+            Action: SNS:Publish
+            Resource: !Ref AlertsTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+
+  # AWS emails a confirmation link once; alerts only arrive after it is clicked.
+  AlertsEmail:
+    Type: AWS::SNS::Subscription
+    Condition: UseAlerts
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Sub '{{resolve:ssm:${AlertEmailParameter}}}'
+
+  # Account-wide: every Lambda in the account shares the concurrency limit (10 today), so a student burst can throttle other apps.
+  LambdaConcurrencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlerts
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-lambda-concurrency-near-limit'
+      AlarmDescription: Account-wide Lambda concurrency is near the limit; other apps can be throttled. See docs/END_TO_END.md, Alerts.
+      Namespace: AWS/Lambda
+      MetricName: ConcurrentExecutions
+      Statistic: Maximum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: !Ref ConcurrencyAlarmThreshold
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  LambdaThrottlesAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlerts
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-lambda-throttles'
+      AlarmDescription: Lambda invocations were throttled account-wide (the concurrency limit was hit). See docs/END_TO_END.md, Alerts.
+      Namespace: AWS/Lambda
+      MetricName: Throttles
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  DeployFunctionErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlerts
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-portal-function-errors'
+      AlarmDescription: The portal/CLI function crashed (an unhandled error). Check its CloudWatch logs.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref DeployFunction}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  SweeperErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlerts
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-sweeper-errors'
+      AlarmDescription: The daily sweeper failed to archive a site or finish a domain removal; it retries tomorrow. Check its logs.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref SweeperFunction}]
+      Statistic: Sum
+      Period: 86400
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  GatewayErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlertsAndBackend
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-backend-gateway-errors'
+      AlarmDescription: The student-backend gateway crashed (an unhandled error in the platform code, not a student's function).
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref GatewayFunction}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
+  BackendServerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlertsAndBackend
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-backend-5xx'
+      AlarmDescription: Many 5xx answers from student backends in 5 minutes (a broken student function or a platform problem). Check the logs of the busiest sd-* function.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions: [{Name: ApiId, Value: !Ref BackendApi}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 20
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
 Outputs:
   DeployApiUrl:
     Description: Paste into API_URL in student/deploy.mjs
@@ -666,6 +838,10 @@ Outputs:
     Value: !Ref PortalDistribution
   TokensTableName:
     Value: !Ref TokensTable
+  AlertsTopicArn:
+    Condition: UseAlerts
+    Description: SNS topic that emails budget and alarm alerts (the email must confirm the subscription once)
+    Value: !Ref AlertsTopic
   BackendApiUrl:
     Condition: UseBackend
     Description: Backend API (reached through CloudFront at <student>.<RootDomain>/api/)
