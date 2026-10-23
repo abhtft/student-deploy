@@ -60,6 +60,14 @@ export function buildKit(out, { force = false } = {}) {
     writeFileSync(join(out, name), content);
   }
 
+  // Text files always get LF line endings, so the kit (and its manifest hashes) is identical whichever computer built it.
+  for (const file of listFiles(out)) {
+    const data = readFileSync(file);
+    if (data.includes(0)) continue; // binary
+    const text = data.toString('utf8');
+    if (text.includes('\r\n')) writeFileSync(file, text.replace(/\r\n/g, '\n'));
+  }
+
   const platform = JSON.parse(readFileSync(join(out, 'platform.json'), 'utf8'));
   const files = Object.fromEntries(listFiles(out).map((f) => [relative(out, f).split(sep).join('/'), createHash('sha256').update(readFileSync(f)).digest('hex')]).sort());
   writeFileSync(join(out, 'kit-manifest.json'), `${JSON.stringify({ kit: platform.kit, kitVersion: platform.kitVersion, files }, null, 2)}\n`);

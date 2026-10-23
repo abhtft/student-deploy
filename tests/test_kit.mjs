@@ -15,6 +15,7 @@ const python = spawnSync('python', ['--version']).status === 0 ? 'python' : 'pyt
 const work = mkdtempSync(join(tmpdir(), 'kit-'));
 const say = (m) => console.log(`  ok  ${m}`);
 const read = (p) => readFileSync(p, 'utf8');
+const lf = (p) => read(p).replace(/\r\n/g, '\n');
 
 const kit = join(work, 'kit');
 buildKit(kit);
@@ -36,7 +37,7 @@ say('every file an AI editor reads carries the same rules (CLAUDE.md imports the
 
 // single sources: the kit copies are byte-identical to the platform's own files
 for (const [from, to] of [['student/portal-deploy.mjs', 'portal-deploy.mjs'], ['student/class_ai.py', 'backend/class_ai.py'], ['student/class_ai.mjs', 'variants/node-backend/class_ai.mjs']]) {
-  assert.equal(read(join(kit, to)), read(join(repo, from)), `${to} must be the platform's ${from}`);
+  assert.equal(read(join(kit, to)), lf(join(repo, from)), `${to} must be the platform's ${from} (line endings normalised to LF)`);
 }
 const manifest = JSON.parse(read(join(kit, 'kit-manifest.json')));
 for (const [path, sha] of Object.entries(manifest.files)) assert.equal(createHash('sha256').update(readFileSync(join(kit, path))).digest('hex'), sha, `manifest hash of ${path}`);
@@ -197,6 +198,13 @@ const doctor = spawnSync(process.execPath, [join(kit, 'tools', 'doctor.mjs')], {
 assert.match(doctor.stdout, /Node \d+/);
 assert.match(doctor.stdout, /git /);
 say('doctor reports Node, npm, git and Python');
+
+// the kit is deterministic and uses LF everywhere, so manifests match whichever computer built it
+const again = join(work, 'kit-again');
+buildKit(again);
+assert.equal(read(join(again, 'kit-manifest.json')), read(join(kit, 'kit-manifest.json')), 'two builds give the same manifest');
+assert.deepEqual(listAll(kit).filter((f) => readFileSync(f).includes(Buffer.from([13, 10]))), [], 'no CRLF line endings in the kit');
+say('building twice gives the same manifest; every text file uses LF');
 
 // build-kit refuses to overwrite by accident
 assert.throws(() => buildKit(kit), /not empty/);
