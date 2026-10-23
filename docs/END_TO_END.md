@@ -1,6 +1,8 @@
 # Student Deploy Portal: the complete workflow
 
-This is the single reference for how the whole system works from end to end: what it is, how a request travels, what each role does day to day, how to set it up and operate it, how it was verified, and where it is limited. It describes the system **as deployed on 2026-10-21** (stack `student-hosting`, region `us-east-1`).
+> **Companion document.** The source of truth for this release is [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md); if the two disagree, the specification wins. This document goes deeper on the end-to-end workflow and day-to-day operation.
+
+This is the detailed reference for how the whole system works from end to end: what it is, how a request travels, what each role does day to day, how to set it up and operate it, how it was verified, and where it is limited. It describes the system **as deployed on 2026-10-21** (stack `student-hosting`, region `us-east-1`).
 
 Other documents, each with a narrower job:
 
@@ -220,7 +222,7 @@ A domain keeps working if the teacher later turns the switch off; the switch onl
 4. **Teacher login:** `node admin.mjs teacher-setup <username>` (hidden password prompt; stores a salted scrypt hash in SSM). Never edit the `TeacherAccount` resource in the template: an update resets it.
 5. **Publish the portal pages:** `node admin.mjs portal-publish`.
 6. **Custom domains (hand-made pieces):** the multi-tenant distribution, the function `student-hosting-spa-fallback`, the connection group (routing endpoint) and the origin access control. Their IDs go into `samconfig.toml` as `TenantDistributionId` and `RoutingEndpoint`. Configuration files: `custom-domain/`. Then give that distribution its `/api` route: `python custom-domain/apply-tenant-api-route.py --apply` (see 4.4).
-7. **Backends:** set `BackendEnabled="true"` in `samconfig.toml` and deploy (staged: see `implement.md` Part 4). Recommended first: a budget alert, and request the Lambda concurrency quota increase.
+7. **Backends:** set `BackendEnabled="true"` in `samconfig.toml` and deploy (staged: see `implement.md` Part 4). Recommended first: a budget alert. (The Lambda concurrency increase to 1,000 was granted on 2026-10-22.)
 
 ### 4.2 The safe deploy routine (every time)
 
@@ -276,13 +278,13 @@ One SNS topic emails one address (error alarms only; cost budgets are set up sep
 
 | Alert | Fires when | What to do |
 |---|---|---|
-| `lambda-concurrency-near-limit` | account-wide concurrency reaches `ConcurrencyAlarmThreshold` (8 of 10) | other apps in the account can be throttled; use the **Backend: off** button for the busiest student |
+| `lambda-concurrency-near-limit` | account-wide concurrency reaches `ConcurrencyAlarmThreshold` (8 at the current setting, tuned for the old account limit of 10) | other apps in the account can be throttled; use the **Backend: off** button for the busiest student |
 | `lambda-throttles` | 5 or more throttled invocations in 5 minutes | same as above |
 | `portal-function-errors`, `backend-gateway-errors` | the platform code crashed (an unhandled error) | read that function's CloudWatch logs |
 | `sweeper-errors` | the daily sweeper failed on a site or domain (it retries next day) | read the sweeper logs |
 | `backend-5xx` | 20 or more 5xx answers from student backends in 5 minutes | read the logs of the busiest `sd-*` function |
 
-After the Lambda quota increase is granted, raise `ConcurrencyAlarmThreshold` (for example 800) in `samconfig.toml`. Alarms are quiet when there is no data. Test one safely with `aws cloudwatch set-alarm-state --alarm-name <name> --state-value ALARM --state-reason test`; it returns to OK by itself.
+The Lambda quota increase was granted (1,000 on 2026-10-22); raising `ConcurrencyAlarmThreshold` (for example 800) in `samconfig.toml` is still to be done together with re-tuning the in-flight caps (specification section 12.3). Alarms are quiet when there is no data. Test one safely with `aws cloudwatch set-alarm-state --alarm-name <name> --state-value ALARM --state-reason test`; it returns to OK by itself.
 
 ### 4.5b Recovering a file (S3 versioning)
 
@@ -319,7 +321,7 @@ Rotate: create a new management key, update the secret (the functions re-read it
 | Backend runtime | 256 MB, 10 seconds, request and response 1 MB each; 20 env variables, 4 KB |
 | Backend concurrency | 3 student requests in flight in total, 2 per student; 120 requests per minute per visitor; Backend API throttle 10 per second (burst 20) |
 | Run allowance | default 5,000 per month, up to 1,000,000; the teacher edits it any time |
-| Account Lambda limit | **10 concurrent executions** (shared with other apps): enable backends for a few students only until the quota is raised |
+| Account Lambda limit | **1,000 concurrent executions** (raised from 10 on 2026-10-22; shared with other apps). The in-flight caps (3 total, 2 per student) and the alarm threshold (8) were tuned for the old limit and are unchanged: re-tune them with a load test (specification section 12.3) |
 | Custom domains | one per student, subdomains only |
 
 ---
@@ -378,7 +380,7 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 | **HTML** 403 on `POST /api/...` on a custom domain | CloudFront rejected the method: the tenant distribution has no `/api/*` behavior | `python custom-domain/apply-tenant-api-route.py --apply` |
 | `404 no_backend` | no backend deployed yet, or still creating | wait for **Ready**; a freshly deployed backend is served within about 2 seconds |
 | `403 forbidden` from the gateway | request did not come through CloudFront (no origin secret) | call the site address, not the API URL |
-| `429 busy` | in-flight limiter working | the starter frontend retries; raise caps only after the quota increase |
+| `429 busy` | in-flight limiter working | the starter frontend retries; the quota is now 1,000, so the caps can be raised after a load test (specification section 12.3) |
 | `429 allowance_exhausted` | the student's runs are used up | **+1,000** or **Runs…** |
 | `503 backend_off` | the teacher turned it off | **Backend: on** |
 | Backend upload "SignatureDoesNotMatch" | presigned URL signed with the old scheme | the backend S3 client must use SigV4 (fixed and tested) |
@@ -410,13 +412,13 @@ Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): 
 |---|---|
 | One teacher account | several accounts need a list in the SSM entry plus add/remove commands (designed, not built) |
 | Backend deploy only through the portal | the CLI keys have no token record to hold the toggle and allowance; needs a design decision |
-| Lambda quota is 10 | request an increase to 1000 before enabling more than a few backends, then switch to reserved concurrency per student |
+| In-flight caps and alarm threshold still tuned for a Lambda limit of 10 | the limit is now 1,000 (granted 2026-10-22): re-tune the caps, the alarm threshold and per-student reserved concurrency with a load test |
 | Function internet egress is unrestricted | accepted for a class setting; blocking it needs a VPC with filtering |
 | No Content-Security-Policy on the portal | add once it can be tested against real S3 uploads |
 | No teacher button to remove a student's custom domain | switch the permission off, take the site offline, or revoke |
 | Custom-domain pieces are outside CloudFormation | documented and guarded by a test; bring them into the template later |
 | `/api` exactly (no trailing slash) | the `/api/*` route does not match it, so the visitor gets the site's own page. `/api/` and everything below it reach the student's function (path `/` for `/api/`). Frontends should always call `/api/<route>` (checked live on both the normal address and a custom domain) |
-| The AI cap is a dollar cap, not a model list | a student's key can call any OpenRouter model; a hard allow-list would need a proxy (3 Lambdas per call at the account limit of 10) |
+| The AI cap is a dollar cap, not a model list | a student's key can call any OpenRouter model; a hard allow-list would need a proxy (three concurrent Lambdas per call) |
 | AI answers are not streamed | the function and gateway return one response; the longest wait is 25 s |
 | Not yet: CORS allow-list for cross-origin use, "Request more runs" from the student, custom-domain support for the portal address itself | listed in `backend_wire.md` |
 

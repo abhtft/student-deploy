@@ -1,5 +1,7 @@
 # Backend wire: feasible plan
 
+> **Historical record.** This document describes the design plan as it was when it was written. For current behaviour, limits and configuration see [docs/TECHNICAL_SPECIFICATION.md](docs/TECHNICAL_SPECIFICATION.md), the source of truth. Statements about "a limit of 10" concurrent Lambda executions describe the situation then: the limit is now 1,000 (granted 2026-10-22).
+
 Status: **proposal with owner decisions recorded (2026-10-20), nothing built yet.** Written against the current `student-deploy` stack.
 Items marked **(verify)** are facts I could not confirm from this account and must be checked before they are relied on.
 

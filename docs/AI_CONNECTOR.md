@@ -1,5 +1,7 @@
 # Class AI connector: how it works, how to run it, how it is secured
 
+> **Companion document.** The source of truth for this release is [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md); if the two disagree, the specification wins. This document goes deeper on the class AI connector: flows, data map, threat model and runbook.
+
 An optional feature. The teacher can give a student's **backend** an AI key that is capped, revocable and metered by OpenRouter, so students need no key of their own and none can overspend. Companion to [END_TO_END.md](END_TO_END.md) (section 3.3a), [API_REFERENCE.md](API_REFERENCE.md) and [../student/BACKEND.md](../student/BACKEND.md).
 
 Diagrams use [Mermaid](https://mermaid.js.org/) (GitHub draws them; each is followed by the same steps in words).
@@ -186,7 +188,7 @@ The student page asks `GET /api/student/ai` about once a minute; the server read
 
 - **A student can use their own key from anywhere** until it is disabled or capped out. The cap is the bound. Keep the default small.
 - **Student keys sit in DynamoDB and function settings in plain form** (AWS encrypts both at rest). The Deploy, Gateway and Sweeper roles and any account administrator can read them. They are low value (capped, revocable), unlike the management key.
-- **Not a model allow-list.** A student's key can call any OpenRouter model. The cap limits the damage; a hard list would need a proxy (3 concurrent Lambdas per call at an account limit of 10).
+- **Not a model allow-list.** A student's key can call any OpenRouter model. The cap limits the damage; a hard list would need a proxy (three concurrent Lambdas per call).
 - **Prompts go to the AI provider.** Students are told not to send private data. The platform never stores prompts, but a student's own function may log them.
 - **Usage lags**, so a burst can overshoot a cap by a few calls.
 - **No "rotate this student's key" button yet.** If a key must be replaced, delete it in OpenRouter and clear that student's `ai` block (see 7.3).

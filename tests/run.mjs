@@ -106,6 +106,11 @@ await step('student kit end to end: deploy through portal-deploy.mjs, class AI o
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('specification: the machine-checked facts in docs/TECHNICAL_SPECIFICATION.md equal the code', () => {
+  const r = spawnSync(python, [join(here, 'test_spec.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student downloads: published files, the card and both workflows agree', () => {
   const r = spawnSync('node', [join(here, 'test_downloads.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

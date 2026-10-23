@@ -609,9 +609,9 @@ Per student, on the Tokens page:
 
 Functions and code are never deleted automatically. A student can remove their own backend; the teacher's on/off and allowance survive removal.
 
-## Protections (how your other apps stay safe at a limit of 10)
+## Protections (designed for an account limit of 10; the limit is now 1,000)
 
-The account's Lambda limit is **10 concurrent executions**, shared with your other apps, so reserved concurrency per student cannot be used yet. Instead:
+**Update 2026-10-22: AWS raised the limit to 1,000, so the numbers below are conservative; re-tuning them is open item 1 in docs/TECHNICAL_SPECIFICATION.md section 12.3.** The account's Lambda limit was **10 concurrent executions**, shared with your other apps, so reserved concurrency per student could not be used. Instead:
 - **In-flight limiter** in the gateway: at most **3 student requests at once** in total and **2 per student**. A request over the cap gets `429 busy` immediately. Each request holds two slots (gateway + student function), so student traffic uses at most about 6 of the 10.
 - **Per-visitor limit:** 120 requests per minute per visitor per student.
 - **Backend API throttle:** 10 requests per second (burst 20), separate from the portal and CLI API.
@@ -678,6 +678,6 @@ Gives students an AI key without them having one: a capped, revocable OpenRouter
 | **HTML** 403 on `POST /api/...` on a custom domain | The tenant distribution has no `/api/*` behavior (CloudFront rejects POST on a GET/HEAD-only behavior). Apply `custom-domain/apply-tenant-api-route.py` |
 | `404 no_backend` | The student has not deployed yet, or the deploy is still "creating" |
 | `403 forbidden` from the gateway | The request did not come through CloudFront (missing origin secret) |
-| Many `429 busy` | The in-flight limiter is working; raise the caps only after the Lambda quota increase |
+| Many `429 busy` | The in-flight limiter is working; the quota is now 1,000, so the caps can be raised after a load test |
 | Deploy fails with "Could not deploy your backend" | The AWS message is shown to the student; usual causes are a bad zip or a Lambda limit |
 | Student cannot upload | Backend is off, token not active, or the zip contains `.env` / no entry file |

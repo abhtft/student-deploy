@@ -1,5 +1,7 @@
 # API reference
 
+> **Companion document.** The source of truth for this release is [TECHNICAL_SPECIFICATION.md](TECHNICAL_SPECIFICATION.md); if the two disagree, the specification wins. This document goes deeper on every HTTP route and its request and response shapes.
+
 Every HTTP route of the portal, the legacy CLI, and the student-backend gateway. Companion to [END_TO_END.md](END_TO_END.md).
 
 Conventions:
