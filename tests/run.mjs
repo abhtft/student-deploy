@@ -81,6 +81,26 @@ await step('web: folder checks and zip builder (zip validated by the Lambda code
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('class AI helper (Python): friendly errors, retries, offline mock, key never printed', () => {
+  const r = spawnSync(python, [join(here, 'test_class_ai.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('class AI helper (Node): friendly errors, retries, offline mock, key never printed', () => {
+  const r = spawnSync('node', [join(here, 'test_class_ai.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('student kit: contents, IDE rule copies, checker rules, local dev servers', () => {
+  const r = spawnSync('node', [join(here, 'test_kit.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('student kit end to end: deploy through portal-deploy.mjs, class AI on and off, Python and Node (needs network for npm)', () => {
+  const r = spawnSync('node', [join(here, 'test_kit_e2e.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student downloads: published files, the card and both workflows agree', () => {
   const r = spawnSync('node', [join(here, 'test_downloads.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

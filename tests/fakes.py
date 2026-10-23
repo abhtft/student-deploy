@@ -266,7 +266,9 @@ class FakeLambda:
 
     @staticmethod
     def _env(function):
-        return dict((function["config"].get("Environment") or {}).get("Variables") or {})
+        env = dict((function["config"].get("Environment") or {}).get("Variables") or {})
+        env["AWS_LAMBDA_FUNCTION_NAME"] = function["config"]["FunctionName"]  # real Lambda sets this for every function
+        return env
 
     def _run_python(self, function, event):
         import contextlib

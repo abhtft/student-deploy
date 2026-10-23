@@ -1,0 +1,8 @@
+{
+  "kit": "class-platform-starter",
+  "kitVersion": "1.0.0",
+  "portal": "https://deploy.margdarshakss.com",
+  "frontend": "frontend",
+  "backend": "backend",
+  "backendRuntime": "python"
+}

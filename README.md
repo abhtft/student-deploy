@@ -29,6 +29,7 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 
 | Read this | For |
 |---|---|
+| **[docs/STUDENT_KIT.md](docs/STUDENT_KIT.md)** | **Student kit:** a starter project for AI editors (rules, checker, local dev, auto-deploy): the journey from a token to a deployed app, how the architecture is enforced, security, publishing, tests |
 | **[docs/AI_CONNECTOR.md](docs/AI_CONNECTOR.md)** | **Class AI connector:** workflow diagrams (setup, teacher on/off, a student's AI call, key lifecycle), where each secret lives, threat model, IAM matrix, operations and emergencies |
 | **[docs/END_TO_END.md](docs/END_TO_END.md)** | **The complete workflow:** architecture, how requests travel, teacher and student workflows, setup, operations, verification, security, troubleshooting, limits |
 | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Every HTTP route, request, response and error code |
