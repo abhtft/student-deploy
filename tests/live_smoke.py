@@ -10,7 +10,9 @@ import io
 import json
 import os
 import secrets
+import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -332,6 +334,32 @@ try:
               not any(n in (cfg.get("Environment") or {}).get("Variables", {}) for n in ai.AI_ENV_NAMES) and cfg["Timeout"] == 10, cfg["Timeout"])
         item = ai.set_ai(portal.db().get(f"tok#{tid}"), {"enabled": True}, ai_now())
         check("AI: switching on again re-enables the same key", openrouter.get_key(ai_hash)["disabled"] is False and ai.settings(item)["hash"] == ai_hash)
+
+    # ---------- I: the student kit exactly as a student gets it, deployed to production with its own portal-deploy.mjs ----------
+    # (the AI cap was shrunk in section H to reach it quickly: give it room again)
+    item = ai.set_ai(portal.db().get(f"tok#{tid}"), {"enabled": True, "limit_usd": 0.02}, ai_now())
+    repo_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+    with tempfile.TemporaryDirectory() as kit_parent:
+        kit_dir = os.path.join(kit_parent, "kit")
+        built = subprocess.run(["node", os.path.join(repo_root, "starter", "build-kit.mjs"), kit_dir], capture_output=True, text=True)
+        check("KIT: the kit builds", built.returncode == 0, built.stdout + built.stderr)
+        installed = subprocess.run("npm ci --no-audit --no-fund", cwd=os.path.join(kit_dir, "frontend"), shell=True, capture_output=True, text=True)
+        check("KIT: the starter's packages install (npm ci)", installed.returncode == 0, installed.stdout[-300:] + installed.stderr[-300:])
+        platform_check = subprocess.run(["node", os.path.join(kit_dir, "tools", "check.mjs")], cwd=kit_dir, capture_output=True, text=True)
+        check("KIT: npm run check passes on the untouched kit", platform_check.returncode == 0, platform_check.stdout[-400:])
+        deployed = subprocess.run(["node", os.path.join(kit_dir, "portal-deploy.mjs")], cwd=kit_dir, capture_output=True, text=True,
+                                  env={**os.environ, "PORTAL_URL": BASE, "PORTAL_TOKEN": token})
+        check("KIT: portal-deploy.mjs publishes the kit's backend and site to production", deployed.returncode == 0 and "Backend ready" in deployed.stdout and "Frontend live at" in deployed.stdout, deployed.stdout[-400:] + deployed.stderr[-400:])
+        time.sleep(3)
+        s, b, _ = site("/api/health")
+        check("KIT: /api/health answers on the live site", s == 200 and b == {"ok": True}, (s, b))
+        s, b, _ = site("/api/ask", "POST", {"prompt": "Reply with the single word: ok"})
+        answer = (b or {}).get("answer", "") if isinstance(b, dict) else ""
+        check("KIT: the kit's own ask() reaches the real model on the platform (not the offline mock)", s == 200 and answer and not answer.startswith("[mock AI]"), (s, b))
+        s, b, _ = site("/")
+        check("KIT: the kit's site is served", s == 200 and "root" in str(b), (s, str(b)[:80]))
+        s, b, _ = site("/api/ask", "POST", {"prompt": ""})
+        check("KIT: the kit validates input (400 for an empty prompt)", s == 400, (s, b))
 finally:
     cleanup()
     leftover_functions = [f["FunctionName"] for f in lam.list_functions()["Functions"] if f["FunctionName"] == f"sd-{SLUG}"]
