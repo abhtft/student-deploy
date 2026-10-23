@@ -9,9 +9,11 @@
 //
 // Nothing secret and nothing personal goes in: the kit is generic and can live in a public repository.
 import { createHash } from 'node:crypto';
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { zipEntries } from './zip.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, '..');
@@ -53,6 +55,8 @@ export function buildKit(out, { force = false } = {}) {
   copy('student/portal-deploy.mjs', 'portal-deploy.mjs');
   copy('student/class_ai.py', 'backend/class_ai.py');
   copy('student/class_ai.mjs', 'variants/node-backend/class_ai.mjs');
+  mkdirSync(join(out, 'tools'), { recursive: true });
+  cpSync(join(here, 'zip.mjs'), join(out, 'tools', 'zip.mjs')); // `platform update` reads the kit zip with it
 
   const rules = readFileSync(join(here, 'rules', 'AGENTS.md'), 'utf8').replace(/\r\n/g, '\n');
   for (const [name, content] of Object.entries(ruleFiles(rules))) {
@@ -74,15 +78,37 @@ export function buildKit(out, { force = false } = {}) {
   return { out, version: platform.kitVersion, files: Object.keys(files).length + 1 };
 }
 
+/** Build the kit and write it as ONE zip file (deterministic: the same kit always gives the same bytes). Returns {version, sha256, files}. */
+export function buildKitZip(zipFile) {
+  const temp = mkdtempSync(join(tmpdir(), 'kit-zip-'));
+  try {
+    const kit = join(temp, 'kit');
+    const { version } = buildKit(kit);
+    const entries = listFiles(kit).map((f) => ({ name: relative(kit, f).split(sep).join('/'), data: readFileSync(f) }));
+    const zip = zipEntries(entries);
+    mkdirSync(dirname(resolve(zipFile)), { recursive: true });
+    writeFileSync(zipFile, zip);
+    return { version, sha256: createHash('sha256').update(zip).digest('hex'), files: entries.length };
+  } finally {
+    rmSync(temp, { recursive: true, force: true });
+  }
+}
+
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const target = process.argv[2];
-  if (!target) {
-    console.error('Usage: node starter/build-kit.mjs <outDir> [--force]');
+  const zipAt = process.argv.indexOf('--zip');
+  const target = zipAt >= 0 ? null : process.argv[2];
+  if (!target && zipAt < 0) {
+    console.error('Usage: node starter/build-kit.mjs <outDir> [--force]   |   node starter/build-kit.mjs --zip <file.zip>');
     process.exit(1);
   }
   try {
-    const result = buildKit(target, { force: process.argv.includes('--force') });
-    console.log(`Kit ${result.version} built in ${result.out} (${result.files} files)`);
+    if (zipAt >= 0) {
+      const result = buildKitZip(process.argv[zipAt + 1]);
+      console.log(`Kit ${result.version} zipped (${result.files} files, sha256 ${result.sha256.slice(0, 12)}...)`);
+    } else {
+      const result = buildKit(target, { force: process.argv.includes('--force') });
+      console.log(`Kit ${result.version} built in ${result.out} (${result.files} files)`);
+    }
   } catch (error) {
     console.error(error.message);
     process.exit(1);

@@ -30,6 +30,23 @@ from fakes import FakeLambda, FakeLogs, FakeOpenRouter, FakeS3, FakeSSM, FakeTen
 
 WEB = os.path.join(here, "..", "web")
 DOWNLOADS = json.load(open(os.path.join(here, "..", "portal-downloads.json"), encoding="utf8"))
+_kit = {}
+
+
+def kit_file(name):
+    """starter-kit.zip and kit-version.json, built once with the same code portal-publish uses."""
+    if not _kit:
+        import subprocess
+        import tempfile
+        folder = tempfile.mkdtemp(prefix="dev-kit-")
+        zip_path = os.path.join(folder, "starter-kit.zip")
+        subprocess.run(["node", os.path.join(here, "..", "starter", "build-kit.mjs"), "--zip", zip_path], check=True, capture_output=True)
+        data = open(zip_path, "rb").read()
+        import hashlib
+        platform_json = json.load(open(os.path.join(here, "..", "starter", "template", "platform.json"), encoding="utf8"))
+        _kit["starter-kit.zip"] = data
+        _kit["kit-version.json"] = json.dumps({"kit": "class-platform-starter", "kitVersion": platform_json["kitVersion"], "zipSha256": hashlib.sha256(data).hexdigest()}).encode()
+    return _kit[name]
 
 
 class DevTenantCloudFront(FakeTenantCloudFront):
@@ -180,6 +197,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api("GET")
         name = self.path.split("?")[0].lstrip("/") or "index.html"
         path = os.path.normpath(os.path.join(WEB, name))
+        if name in ("starter-kit.zip", "kit-version.json"):  # the student kit, built on first request exactly like portal-publish does
+            return self.send(200, kit_file(name), "application/zip" if name.endswith(".zip") else "application/json")
         if name in DOWNLOADS:  # the student downloads, published next to the pages (see portal-downloads.json)
             path = os.path.normpath(os.path.join(here, "..", DOWNLOADS[name]))
             return self.send(200, open(path, "rb").read(), "text/plain; charset=utf-8")

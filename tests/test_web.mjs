@@ -139,3 +139,16 @@ console.log('test_web.mjs: all passed');
 for (const [n, want] of [[0, '$0.00'], [0.25, '$0.25'], [0.5, '$0.50'], [0.1, '$0.10'], [0.0123, '$0.0123'], [0.000095, '$0.0001'], [12.5, '$12.50'], [20, '$20.00']]) {
   assert.equal(usd(n), want, `usd(${n})`);
 }
+
+// the "Start here" card: only well-formed GitHub repository addresses produce links, and links never carry anything but owner/repo
+const { parseRepo, repoLinks, KIT_FILES } = await import('../web/github.js');
+assert.deepEqual(parseRepo('https://github.com/alice/my-site'), { owner: 'alice', repo: 'my-site', base: 'https://github.com/alice/my-site' });
+assert.equal(parseRepo('github.com/alice/my-site.git/').base, 'https://github.com/alice/my-site');
+assert.equal(parseRepo('  https://www.github.com/Alice-1/repo_name.v2  ').repo, 'repo_name.v2');
+for (const bad of ['', 'https://github.com/alice', 'https://evil.com/alice/repo', 'https://github.com/alice/repo/extra', 'http://github.com/alice/repo', 'https://github.com/-bad-/repo',
+  'https://github.com/alice/..', 'https://github.com/alice/repo?x=1', 'https://github.com/alice/repo#frag', 'javascript:alert(1)', 'https://github.com/alice/re po', 'https://github.com/a"b/repo']) {
+  assert.equal(parseRepo(bad), null, `must reject: ${bad}`);
+}
+assert.deepEqual(repoLinks(parseRepo('https://github.com/alice/site')), {
+  secret: 'https://github.com/alice/site/settings/secrets/actions/new', actions: 'https://github.com/alice/site/actions', settings: 'https://github.com/alice/site/settings' });
+assert.deepEqual(KIT_FILES, { zip: 'starter-kit.zip', version: 'kit-version.json' });

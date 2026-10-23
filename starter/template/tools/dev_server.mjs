@@ -45,7 +45,7 @@ const server = createServer(async (req, res) => {
     res.end(data);
   };
   if (url.pathname !== '/api' && !url.pathname.startsWith('/api/')) {
-    return send(404, { 'content-type': 'application/json' }, JSON.stringify({ error: 'not_found', message: 'Only /api/... is served here.' }));
+    return send(404, { 'content-type': 'application/json' }, JSON.stringify({ error: 'not_found', message: `Only /api/... is served here. Try /api${url.pathname}` }));
   }
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);

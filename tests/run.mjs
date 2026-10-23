@@ -96,6 +96,11 @@ await step('student kit: contents, IDE rule copies, checker rules, local dev ser
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('student kit update: platform status and update, managed files only, hash and path checks', () => {
+  const r = spawnSync('node', [join(here, 'test_kit_update.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student kit end to end: deploy through portal-deploy.mjs, class AI on and off, Python and Node (needs network for npm)', () => {
   const r = spawnSync('node', [join(here, 'test_kit_e2e.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

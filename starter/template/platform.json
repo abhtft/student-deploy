@@ -4,5 +4,10 @@
   "portal": "https://deploy.margdarshakss.com",
   "frontend": "frontend",
   "backend": "backend",
-  "backendRuntime": "python"
+  "backendRuntime": "python",
+  "managed": [
+    "AGENTS.md", "GEMINI.md", "CLAUDE.md", ".claude/", ".cursor/", ".github/copilot-instructions.md", ".windsurfrules",
+    ".github/workflows/deploy.yml", "tools/", "portal-deploy.mjs", "backend/class_ai.py", "variants/node-backend/class_ai.mjs",
+    "backend/class_ai.mjs", "PROMPTS.md"
+  ]
 }

@@ -157,6 +157,16 @@ await chat([{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' },
 assert.deepEqual(seen[0].body.messages.map((m) => m.content), ['a', 'b', 'c']);
 say('chat() sends the whole conversation');
 
+// 10b. mock is what the offline mock answers (so a structured reply can be tried offline), and is ignored by the real AI
+env();
+assert.equal(await ask('q', { mock: '{"questions": []}' }), '{"questions": []}');
+assert.equal(await chat([{ role: 'user', content: 'q' }], { mock: 'canned' }), 'canned');
+assert.equal(await ask('q', { mock: '' }), '', 'an empty mock is still a mock');
+platform();
+assert.equal(await ask('q', { mock: 'canned' }), 'Hello from the model');
+assert.equal(seen.length, 1, 'the real AI answers; the mock text is ignored');
+say('mock gives the offline mock a chosen reply and is ignored by the real AI');
+
 // 11. nothing secret in anything printed or raised
 const blob = [...everything, ...logged].join('\n');
 assert.ok(!blob.includes(KEY) && !blob.includes('SECRET'), 'the key leaked into an error or a log');

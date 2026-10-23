@@ -7,8 +7,10 @@
 // OPENAI_API_KEY, OPENAI_BASE_URL and AI_MODEL. This module reads them and makes one request in the OpenAI-compatible format.
 // Node 22 built-ins only: nothing to install.
 //
-//   ask(prompt, { system, maxTokens = 300, model, default, temperature })   -> the answer text
-//   chat(messages, { maxTokens = 300, model, default, temperature })       -> the same, with a full message list
+//   ask(prompt, { system, maxTokens = 300, model, default, temperature, mock })   -> the answer text
+//   chat(messages, { maxTokens = 300, model, default, temperature, mock })       -> the same, with a full message list
+//                                                                                (for a conversation: send the earlier messages too,
+//                                                                                the AI remembers nothing between calls)
 //   available()                                                            -> true when an answer can be produced (real or mock)
 //
 // On any problem it throws AiError with a friendly `.message` you can show, and a `.kind`: not_enabled (the class AI is not on for
@@ -16,6 +18,9 @@
 // provider_error. Pass { default: 'Sorry, the AI is resting' } to get that text back instead of an exception.
 // On your own computer, with no variables set, it answers from a tiny OFFLINE MOCK (starts with "[mock AI]"), so you can build and
 // test without spending anything. AI_MOCK=1 forces the mock anywhere, AI_MOCK=0 forbids it.
+// { mock: '...' } is the text the offline mock returns instead of "[mock AI] ...". Use it when your code expects a certain shape,
+// for example { mock: '[{"question": "2+2?", "choices": ["3", "4"], "answer": 1}]' }, so you can try the whole flow offline.
+// It is ignored when the real AI answers.
 //
 // Safety: the key is never printed, logged or put in an error. Never send it to the browser: your page calls your own /api route.
 // Your prompts go to the AI provider, so do not send private data.
@@ -83,9 +88,10 @@ async function post(url, key, payload, timeoutMs) {
   }
 }
 
-export async function chat(messages, { maxTokens = 300, model, default: fallback, temperature } = {}) {
+export async function chat(messages, { maxTokens = 300, model, default: fallback, temperature, mock } = {}) {
   try {
     if (mockMode()) {
+      if (mock !== undefined) return String(mock);
       const last = [...messages].reverse().find((m) => m.role === 'user');
       return `[mock AI] You asked: ${String(last?.content ?? '').slice(0, 120)}`;
     }
@@ -118,7 +124,7 @@ export async function chat(messages, { maxTokens = 300, model, default: fallback
   }
 }
 
-export async function ask(prompt, { system, maxTokens = 300, model, default: fallback, temperature } = {}) {
+export async function ask(prompt, { system, maxTokens = 300, model, default: fallback, temperature, mock } = {}) {
   const messages = [...(system ? [{ role: 'system', content: system }] : []), { role: 'user', content: String(prompt) }];
-  return chat(messages, { maxTokens, model, default: fallback, temperature });
+  return chat(messages, { maxTokens, model, default: fallback, temperature, mock });
 }

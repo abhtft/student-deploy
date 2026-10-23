@@ -88,7 +88,11 @@ Two lines in the student's backend: `from class_ai import ask` / `answer = ask("
 
 ## 7. Publishing the kit
 
-Build it anywhere: `node starter/build-kit.mjs <folder>` (add `--force` to replace a non-empty folder). The folder is the whole kit. Publish it as a **public GitHub template repository** (students click "Use this template") by pushing that folder's contents to the template repo; there is nothing secret in it. Rebuild and push when `starter/` or the single-source files change. (The portal's "Start here" card and `kit update` command come next: see section 9.)
+**On the portal (automatic):** `node admin.mjs portal-publish` builds the kit fresh from `starter/` as one deterministic zip and publishes `starter-kit.zip` and `kit-version.json` next to the pages. The student page's **Start here** card offers the download, shows the kit version, and gives deep links once the student pastes their repository address (only a well-formed `https://github.com/<owner>/<repo>` produces links; they carry no token). A checklist ticks as the site is published, the backend runs and the class AI is switched on.
+
+**As a public GitHub template repository (optional):** build the kit (`node starter/build-kit.mjs <folder>`; add `--force` to replace a non-empty folder), create an empty public repository, push the folder's contents (the kit contains nothing secret and nothing personal: a test scans for it), then in the repository's Settings tick **Template repository**. Students then click "Use this template". Put the repository address in `TEMPLATE_URL` in `web/github.js` to show a "use the GitHub template" button on the card. Rebuild and push when `starter/` or the single-source files change.
+
+**Updating a student's project later:** `node tools/platform.mjs status` compares the kit version with the portal's; `node tools/platform.mjs update` lists what would change (nothing is written); add `--apply` to write it. It can only touch the platform-managed files named in `platform.json` (the rules for the AI editors, `tools/`, the workflow, `portal-deploy.mjs`, `class_ai`, `PROMPTS.md`), never `frontend/`, the student's backend code or any `.env` file. It checks the downloaded zip against the hash the portal publishes, refuses unsafe paths, and keeps a managed file the student edited unless `--force` is given.
 
 ## 8. Testing
 
@@ -96,13 +100,21 @@ Build it anywhere: `node starter/build-kit.mjs <folder>` (add `--force` to repla
 |---|---|
 | `tests/test_class_ai.py`, `test_class_ai.mjs` | the helper in both languages: success, every error kind, retries, timeout, mock, `default=`, no key or prompt in any output |
 | `tests/test_kit.mjs` | kit contents; all rule copies identical; single-source files identical; no secrets or personal data; limits equal the platform's; each checker rule fires on a deliberate mistake (about 30 fixtures) and stays quiet on comments and placeholders; both dev servers run with hot reload and the AI mock |
+| `tests/test_kit_update.mjs` | `platform status` and `update` against the dev portal: current projects, older kits (dry run writes nothing, `--apply` updates only managed files, student code untouched), edited files protected, deleted files restored; hostile portals (wrong hash, unsafe path, extra files) |
 | `tests/test_kit_e2e.mjs` | build the kit, `npm ci`, deploy it with its own `portal-deploy.mjs` to the whole dev portal, switch the AI on as the teacher: `ask()` reaches the model with the student's own key; switch off gives a friendly `not_enabled`; the Node variant works too (needs network for npm) |
 | Mutation checks | breaking the helper's error mapping, retry, key scrubbing, mock rules and the checker's rules is caught |
 
-## 9. What comes next
+## 9. Does an AI really follow the rules? (evaluation) and what comes next
 
-1. **Portal "Start here" card:** kit download, a "paste your GitHub repo" box that gives deep links to the secrets and Actions pages, and a checklist that ticks as things happen.
-2. **`kit update`:** fetch newer rules and tools into an existing project without touching the student's code (the manifest makes this safe).
-3. **AI evaluation:** run fresh AI agents on the kit with typical prompts and measure how often `check`, the build and a live deploy pass; tune `AGENTS.md` until it is reliable.
-4. **Deploy activity history** so the portal confirms "your GitHub push went live".
-5. **Pilot** with two or three real students.
+The rules are measured, not assumed: fresh AI agents get only the kit and a student-style request, and each result is verified independently (check, build, a deploy to the dev portal with the class AI on, a smoke test of every route). Protocol, scenarios and results: [`../starter/eval/`](../starter/eval/README.md).
+
+- **Round 1** (8 scenarios, first rules): all 8 pass every gate; both adversarial requests ("use Express and MongoDB", "put my AI key in the React app") were refused correctly; the AI was always reached through `class_ai`; no secret leaked.
+- **Round 2** (5 scenarios, rules tuned from round 1's feedback): all 5 pass, including a switch to the Node backend and shared data with a labelled practice mode.
+
+**The signal to act on:** every agent that needed data shared between visitors (a leaderboard, shared notes) invented a different external service and request format. The rules now recommend one convention (Supabase REST, `STORE_URL` and `STORE_KEY`), but the platform has no storage of its own, and students must create an account elsewhere. The natural next connector, after the class AI, is a **capped per-student storage connector** with the same design (the teacher switches it on, a quota, nothing to sign up for).
+
+Next steps:
+1. **Publish the template repository** (section 7) and set `TEMPLATE_URL`.
+2. **Deploy activity history** so the portal confirms "your GitHub push went live" (the checklist currently ticks "published" from the last deploy of any kind).
+3. **Pilot** with two or three real students and read their friction.
+4. **Decide on the storage connector.**

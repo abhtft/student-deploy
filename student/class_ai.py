@@ -9,8 +9,9 @@ When your teacher switches the class AI on, the platform gives your function thr
 OPENAI_API_KEY, OPENAI_BASE_URL and AI_MODEL. This module reads them and makes one request in the OpenAI-compatible format.
 Standard library only: nothing to install.
 
-* ``ask(prompt, system=None, max_tokens=300, model=None, default=None)`` -> the answer text.
-* ``chat(messages, max_tokens=300, model=None, default=None)``          -> the same, with a full message list.
+* ``ask(prompt, system=None, max_tokens=300, model=None, default=None, mock=None)`` -> the answer text.
+* ``chat(messages, max_tokens=300, model=None, default=None, mock=None)``          -> the same, with a full message list
+  (for a conversation: send the earlier messages too, the AI remembers nothing between calls).
 * ``available()``                                                      -> True when an answer can be produced (real or mock).
 * On any problem it raises ``AiError`` with a friendly ``.message`` you can show, and a ``.kind``:
   ``not_enabled`` (the class AI is not on for you), ``cap_reached`` (your allowance is used up), ``disabled`` (your key is off),
@@ -18,6 +19,9 @@ Standard library only: nothing to install.
   Pass ``default="Sorry, the AI is resting"`` to get that text back instead of an exception.
 * On your own computer, with no variables set, it answers from a tiny OFFLINE MOCK (starts with "[mock AI]"), so you can build
   and test without spending anything. Set AI_MOCK=1 to force the mock anywhere, AI_MOCK=0 to forbid it.
+* ``mock="..."`` is the text the offline mock returns instead of "[mock AI] ...". Use it when your code expects a certain shape,
+  for example ``mock='[{"question": "2+2?", "choices": ["3", "4"], "answer": 1}]'``, so you can try the whole flow offline.
+  It is ignored when the real AI answers.
 
 Safety: the key is never printed, logged or put in an error. Never send it to the browser: your page calls your own /api route.
 Your prompts go to the AI provider, so do not send private data.
@@ -86,11 +90,11 @@ def _request(url, key, payload, timeout):
         return json.loads(response.read().decode("utf-8").strip())
 
 
-def chat(messages, max_tokens=300, model=None, default=None, temperature=None):
+def chat(messages, max_tokens=300, model=None, default=None, temperature=None, mock=None):
     """Send a list of {"role", "content"} messages and return the answer text (see the module docstring for errors)."""
     try:
         if _mock_mode():
-            return _mock_answer(messages)
+            return mock if mock is not None else _mock_answer(messages)
         key, base = os.environ.get("OPENAI_API_KEY"), os.environ.get("OPENAI_BASE_URL")
         if not key or not base:
             raise AiError("not_enabled")
@@ -126,7 +130,7 @@ def chat(messages, max_tokens=300, model=None, default=None, temperature=None):
         raise
 
 
-def ask(prompt, system=None, max_tokens=300, model=None, default=None, temperature=None):
+def ask(prompt, system=None, max_tokens=300, model=None, default=None, temperature=None, mock=None):
     """Ask one question and return the answer text."""
     messages = ([{"role": "system", "content": system}] if system else []) + [{"role": "user", "content": str(prompt)}]
-    return chat(messages, max_tokens=max_tokens, model=model, default=default, temperature=temperature)
+    return chat(messages, max_tokens=max_tokens, model=model, default=default, temperature=temperature, mock=mock)

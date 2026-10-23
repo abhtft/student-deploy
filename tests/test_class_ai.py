@@ -172,6 +172,15 @@ run(class_ai.chat, [{"role": "user", "content": "a"}, {"role": "assistant", "con
 assert [m["content"] for m in seen[0]["body"]["messages"]] == ["a", "b", "c"]
 print("  ok  chat() sends the whole conversation")
 
+# 10b. mock= is what the offline mock answers (so a structured reply can be tried offline), and is ignored by the real AI
+env()
+assert run(class_ai.ask, "q", mock='{"questions": []}')[0] == '{"questions": []}'
+assert run(class_ai.chat, [{"role": "user", "content": "q"}], mock="canned")[0] == "canned"
+assert run(class_ai.ask, "q", mock="")[0] == "", "an empty mock is still a mock"
+platform()
+assert run(class_ai.ask, "q", mock="canned")[0] == "Hello from the model" and len(seen) == 1, "the real AI answers; the mock text is ignored"
+print("  ok  mock= gives the offline mock a chosen reply and is ignored by the real AI")
+
 # 11. nothing secret in anything the wrapper printed or raised
 blob = "\n".join(everything)
 assert KEY not in blob and "SECRET" not in blob, "the key leaked into an error or a log"

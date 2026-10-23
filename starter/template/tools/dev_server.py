@@ -69,7 +69,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_any(self):
         parts = urlsplit(self.path)
         if parts.path != "/api" and not parts.path.startswith("/api/"):
-            return self.reply(404, {"content-type": "application/json"}, json.dumps({"error": "not_found", "message": "Only /api/... is served here."}))
+            return self.reply(404, {"content-type": "application/json"}, json.dumps({"error": "not_found", "message": f"Only /api/... is served here. Try /api{parts.path}"}))
         length = int(self.headers.get("content-length") or 0)
         body = self.rfile.read(length).decode("utf-8", "replace") if length else None
         event = {
