@@ -27,9 +27,13 @@ const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);
 const option = (name, fallback) => (args.includes(name) ? args[args.indexOf(name) + 1] : fallback);
 
+/** fail() ends the run by throwing, so the process exits by itself (calling process.exit() while network connections are still closing
+ *  can print a scary libuv assertion on Windows with newer Node versions). */
+class Stop extends Error {}
 function fail(message) {
-  console.error(`\n✖ ${message}`);
-  process.exit(1);
+  console.error(`
+✖ ${message}`);
+  throw new Stop(message);
 }
 
 function readToken() {
@@ -184,21 +188,28 @@ async function deployBackend(session, dir) {
 }
 
 // ---------- main ----------
-const only = option('--only');
-if (only && !['frontend', 'backend'].includes(only)) fail('--only must be "frontend" or "backend".');
-const frontendDir = option('--frontend', 'frontend');
-const backendDir = option('--backend', 'backend');
-const doBackend = only !== 'frontend' && (existsSync(backendDir) || only === 'backend');
-const doFrontend = only !== 'backend' && (existsSync(frontendDir) || only === 'frontend');
-if (only === 'backend' && !existsSync(backendDir)) fail(`The folder ${backendDir}/ does not exist here.`);
-if (only === 'frontend' && !existsSync(frontendDir)) fail(`The folder ${frontendDir}/ does not exist here.`);
-if (!doBackend && !doFrontend) fail(`Nothing to deploy: no ${frontendDir}/ or ${backendDir}/ folder here. Run this from the root of your project.`);
+async function main() {
+  const only = option('--only');
+  if (only && !['frontend', 'backend'].includes(only)) fail('--only must be "frontend" or "backend".');
+  const frontendDir = option('--frontend', 'frontend');
+  const backendDir = option('--backend', 'backend');
+  const doBackend = only !== 'frontend' && (existsSync(backendDir) || only === 'backend');
+  const doFrontend = only !== 'backend' && (existsSync(frontendDir) || only === 'frontend');
+  if (only === 'backend' && !existsSync(backendDir)) fail(`The folder ${backendDir}/ does not exist here.`);
+  if (only === 'frontend' && !existsSync(frontendDir)) fail(`The folder ${frontendDir}/ does not exist here.`);
+  if (!doBackend && !doFrontend) fail(`Nothing to deploy: no ${frontendDir}/ or ${backendDir}/ folder here. Run this from the root of your project.`);
 
-const { session, token } = await api('POST', '/api/student/login', { body: { token: readToken() } });
-if (!token.can_deploy) fail(`Your token cannot deploy right now (status: ${token.status}). Ask your teacher, or request regeneration on the portal.`);
-const daysLeft = Math.ceil((token.expires_at - Date.now() / 1000) / 86400);
-console.log(`▶ Signed in as ${token.student_name || token.slug} (${token.slug}). Token valid for ${daysLeft} more day${daysLeft === 1 ? '' : 's'}.`);
-if (daysLeft <= 3) console.warn('⚠ Your token expires soon. Request regeneration on the portal so deploys keep working.');
+  const { session, token } = await api('POST', '/api/student/login', { body: { token: readToken() } });
+  if (!token.can_deploy) fail(`Your token cannot deploy right now (status: ${token.status}). Ask your teacher, or request regeneration on the portal.`);
+  const daysLeft = Math.ceil((token.expires_at - Date.now() / 1000) / 86400);
+  console.log(`▶ Signed in as ${token.student_name || token.slug} (${token.slug}). Token valid for ${daysLeft} more day${daysLeft === 1 ? '' : 's'}.`);
+  if (daysLeft <= 3) console.warn('⚠ Your token expires soon. Request regeneration on the portal so deploys keep working.');
 
-if (doBackend) await deployBackend(session, backendDir);
-if (doFrontend) await deployFrontend(session, frontendDir);
+  if (doBackend) await deployBackend(session, backendDir);
+  if (doFrontend) await deployFrontend(session, frontendDir);
+}
+
+main().catch((error) => {
+  if (!(error instanceof Stop)) console.error(error);
+  process.exitCode = 1;
+});

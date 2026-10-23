@@ -92,6 +92,8 @@ Two lines in the student's backend: `from class_ai import ask` / `answer = ask("
 
 **As a public GitHub template repository (optional):** build the kit (`node starter/build-kit.mjs <folder>`; add `--force` to replace a non-empty folder), create an empty public repository, push the folder's contents (the kit contains nothing secret and nothing personal: a test scans for it), then in the repository's Settings tick **Template repository**. Students then click "Use this template". Put the repository address in `TEMPLATE_URL` in `web/github.js` to show a "use the GitHub template" button on the card. Rebuild and push when `starter/` or the single-source files change.
 
+**Versioning rule:** whenever anything in the kit changes (`starter/`, the rules, `class_ai`, `portal-deploy.mjs`), bump `kitVersion` in `starter/template/platform.json` before publishing, so `status` can tell students a newer kit exists. `update` itself compares file contents, so it also catches changes without a bump.
+
 **Updating a student's project later:** `node tools/platform.mjs status` compares the kit version with the portal's; `node tools/platform.mjs update` lists what would change (nothing is written); add `--apply` to write it. It can only touch the platform-managed files named in `platform.json` (the rules for the AI editors, `tools/`, the workflow, `portal-deploy.mjs`, `class_ai`, `PROMPTS.md`), never `frontend/`, the student's backend code or any `.env` file. It checks the downloaded zip against the hash the portal publishes, refuses unsafe paths, and keeps a managed file the student edited unless `--force` is given.
 
 ## 8. Testing

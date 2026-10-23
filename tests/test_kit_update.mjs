@@ -18,6 +18,7 @@ const say = (m) => console.log(`  ok  ${m}`);
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const read = (p) => readFileSync(p, 'utf8');
 
+const KIT_VERSION = JSON.parse(read(join(repo, 'starter', 'template', 'platform.json'))).kitVersion; // the version every published kit carries
 const PORT = 8797;
 const portal = `http://127.0.0.1:${PORT}`;
 const server = spawn(python, [join(here, 'dev_server.py'), String(PORT)], { env: { ...process.env, AWS_DEFAULT_REGION: 'us-east-1' } });
@@ -87,7 +88,7 @@ try {
   writeFileSync(join(old, 'frontend', 'src', 'App.tsx'), '// MY OWN APP\n');
   writeFileSync(join(old, 'backend', 'app.py'), '# MY OWN BACKEND\n');
   const olderStatus = platform(old, 'status', '--portal', portal);
-  assert.match(olderStatus.text, /Your kit: 0\.9\.0 +Portal kit: 1\.0\.0/);
+  assert.ok(olderStatus.text.includes(`Your kit: 0.9.0   Portal kit: ${KIT_VERSION}`), olderStatus.text);
   assert.match(olderStatus.text, /newer kit is available/);
   const dry = platform(old, 'update', '--portal', portal);
   assert.match(dry.text, /changed +tools\/doctor\.mjs/);
@@ -99,7 +100,7 @@ try {
   assert.equal(read(join(old, 'frontend', 'src', 'App.tsx')), '// MY OWN APP\n', 'frontend code is never touched');
   assert.equal(read(join(old, 'backend', 'app.py')), '# MY OWN BACKEND\n', 'backend code is never touched');
   const after = JSON.parse(read(join(old, 'platform.json')));
-  assert.equal(after.kitVersion, '1.0.0');
+  assert.equal(after.kitVersion, KIT_VERSION);
   assert.ok(after.managed.includes('tools/'), 'the managed list comes from the portal kit');
   assert.equal(JSON.parse(read(join(old, 'kit-manifest.json'))).files['tools/doctor.mjs'], sha(readFileSync(join(current, 'tools', 'doctor.mjs'))));
   assert.match(platform(old, 'update', '--portal', portal).text, /Nothing to do/);
@@ -114,7 +115,7 @@ try {
   assert.match(plan.text, /new +CLAUDE\.md/);
   assert.match(read(join(edited, 'AGENTS.md')), /My own extra rule/, 'an edited managed file is kept');
   assert.ok(existsSync(join(edited, 'CLAUDE.md')), 'a missing managed file is restored');
-  assert.equal(JSON.parse(read(join(edited, 'platform.json'))).kitVersion, '1.0.0');
+  assert.equal(JSON.parse(read(join(edited, 'platform.json'))).kitVersion, KIT_VERSION);
   const forced = platform(edited, 'update', '--apply', '--force', '--portal', portal);
   assert.doesNotMatch(read(join(edited, 'AGENTS.md')), /My own extra rule/, '--force replaces it');
   say('an edited managed file is skipped (and reported) unless --force; a deleted one is restored');

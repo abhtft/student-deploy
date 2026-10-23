@@ -23,71 +23,82 @@ const root = resolve(option('--root', resolve(dirname(fileURLToPath(import.meta.
 const sha = (data) => createHash('sha256').update(data).digest('hex');
 const readJson = (path, fallback = {}) => { try { return JSON.parse(readFileSync(join(root, path), 'utf8')); } catch { return fallback; } };
 
+/** fail() ends the run by throwing, so the process exits by itself (calling process.exit() while network connections are still closing
+ *  can print a scary libuv assertion on Windows with newer Node versions). */
+class Stop extends Error {}
 function fail(message) {
-  console.error(`\n✖ ${message}`);
-  process.exit(1);
+  console.error(`
+✖ ${message}`);
+  throw new Stop(message);
 }
 
-const platform = readJson('platform.json');
-const portal = String(option('--portal', platform.portal || '')).replace(/\/$/, '');
-if (!portal) fail('platform.json has no "portal" address.');
+async function main() {
+  const platform = readJson('platform.json');
+  const portal = String(option('--portal', platform.portal || '')).replace(/\/$/, '');
+  if (!portal) fail('platform.json has no "portal" address.');
 
-async function download(path) {
-  const response = await fetch(`${portal}/${path}`).catch((e) => fail(`Cannot reach ${portal} (${e.cause?.code || e.message}). Check your internet connection.`));
-  if (!response.ok) fail(`${portal}/${path} answered HTTP ${response.status}.`);
-  return Buffer.from(await response.arrayBuffer());
+  async function download(path) {
+    const response = await fetch(`${portal}/${path}`).catch((e) => fail(`Cannot reach ${portal} (${e.cause?.code || e.message}). Check your internet connection.`));
+    if (!response.ok) fail(`${portal}/${path} answered HTTP ${response.status}.`);
+    return Buffer.from(await response.arrayBuffer());
+  }
+
+  const remoteInfo = JSON.parse((await download('kit-version.json')).toString('utf8'));
+  console.log(`Your kit: ${platform.kitVersion ?? 'unknown'}   Portal kit: ${remoteInfo.kitVersion}`);
+  if (command === 'status') {
+    console.log(platform.kitVersion === remoteInfo.kitVersion ? '✔ Up to date.' : 'A newer kit is available: run  node tools/platform.mjs update');
+    return;
+  }
+  if (command !== 'update') fail('Usage: node tools/platform.mjs status | update [--apply] [--force]');
+
+  const apply = args.includes('--apply');
+  const force = args.includes('--force');
+  const zip = await download('starter-kit.zip');
+  if (sha(zip) !== remoteInfo.zipSha256) fail('The downloaded kit does not match the hash the portal published, so nothing was changed. Try again; if it repeats, tell your teacher.');
+  let files;
+  try { files = readZip(zip); } catch (error) { fail(`The kit zip could not be read: ${error.message}`); }
+
+  const remotePlatform = JSON.parse(files.get('platform.json')?.toString('utf8') ?? '{}');
+  const managed = remotePlatform.managed ?? [];
+  if (!managed.length) fail('The portal kit lists no managed files, so nothing was changed.');
+  const isManaged = (path) => managed.some((m) => (m.endsWith('/') ? path.startsWith(m) : path === m));
+  const installed = readJson('kit-manifest.json', { files: {} }).files ?? {};
+
+  const plan = [];
+  for (const [path, data] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
+    if (!isManaged(path)) continue;
+    const target = join(root, path);
+    if (!existsSync(target)) { plan.push({ path, data, state: 'new' }); continue; }
+    const local = readFileSync(target);
+    if (sha(local) === sha(data)) plan.push({ path, data, state: 'same' });
+    else if (installed[path] && sha(local) !== installed[path] && !force) plan.push({ path, data, state: 'edited' });
+    else plan.push({ path, data, state: 'update' });
+  }
+  const obsolete = Object.keys(installed).filter((p) => isManaged(p) && !files.has(p));
+
+  const label = { new: 'new      ', update: 'changed  ', same: 'same     ', edited: 'EDITED by you (skipped; --force replaces it)' };
+  for (const item of plan.filter((i) => i.state !== 'same')) console.log(`  ${label[item.state].padEnd(9)} ${item.path}`);
+  for (const path of obsolete) console.log(`  no longer in the kit (left alone): ${path}`);
+  const toWrite = plan.filter((i) => i.state === 'new' || i.state === 'update');
+  const skipped = plan.filter((i) => i.state === 'edited');
+  console.log(`${toWrite.length} file(s) to write, ${plan.filter((i) => i.state === 'same').length} already current, ${skipped.length} skipped.`);
+
+  if (!apply) {
+    console.log(toWrite.length || platform.kitVersion !== remoteInfo.kitVersion ? '\nNothing was written. Run again with --apply to update.' : '\nNothing to do.');
+    return;
+  }
+  for (const item of toWrite) {
+    mkdirSync(dirname(join(root, item.path)), { recursive: true });
+    writeFileSync(join(root, item.path), item.data);
+    installed[item.path] = sha(item.data);
+  }
+  const manifest = readJson('kit-manifest.json', { files: {} });
+  writeFileSync(join(root, 'kit-manifest.json'), `${JSON.stringify({ ...manifest, kitVersion: remoteInfo.kitVersion, files: installed }, null, 2)}\n`);
+  writeFileSync(join(root, 'platform.json'), `${JSON.stringify({ ...platform, kitVersion: skipped.length ? platform.kitVersion : remoteInfo.kitVersion, managed }, null, 2)}\n`);
+  console.log(`\n✔ Updated ${toWrite.length} file(s)${skipped.length ? `; ${skipped.length} edited file(s) kept as they are (kit version stays ${platform.kitVersion})` : ` to kit ${remoteInfo.kitVersion}`}. Run: npm run check`);
 }
 
-const remoteInfo = JSON.parse((await download('kit-version.json')).toString('utf8'));
-console.log(`Your kit: ${platform.kitVersion ?? 'unknown'}   Portal kit: ${remoteInfo.kitVersion}`);
-if (command === 'status') {
-  console.log(platform.kitVersion === remoteInfo.kitVersion ? '✔ Up to date.' : 'A newer kit is available: run  node tools/platform.mjs update');
-  process.exit(0);
-}
-if (command !== 'update') fail('Usage: node tools/platform.mjs status | update [--apply] [--force]');
-
-const apply = args.includes('--apply');
-const force = args.includes('--force');
-const zip = await download('starter-kit.zip');
-if (sha(zip) !== remoteInfo.zipSha256) fail('The downloaded kit does not match the hash the portal published, so nothing was changed. Try again; if it repeats, tell your teacher.');
-let files;
-try { files = readZip(zip); } catch (error) { fail(`The kit zip could not be read: ${error.message}`); }
-
-const remotePlatform = JSON.parse(files.get('platform.json')?.toString('utf8') ?? '{}');
-const managed = remotePlatform.managed ?? [];
-if (!managed.length) fail('The portal kit lists no managed files, so nothing was changed.');
-const isManaged = (path) => managed.some((m) => (m.endsWith('/') ? path.startsWith(m) : path === m));
-const installed = readJson('kit-manifest.json', { files: {} }).files ?? {};
-
-const plan = [];
-for (const [path, data] of [...files].sort(([a], [b]) => (a < b ? -1 : 1))) {
-  if (!isManaged(path)) continue;
-  const target = join(root, path);
-  if (!existsSync(target)) { plan.push({ path, data, state: 'new' }); continue; }
-  const local = readFileSync(target);
-  if (sha(local) === sha(data)) plan.push({ path, data, state: 'same' });
-  else if (installed[path] && sha(local) !== installed[path] && !force) plan.push({ path, data, state: 'edited' });
-  else plan.push({ path, data, state: 'update' });
-}
-const obsolete = Object.keys(installed).filter((p) => isManaged(p) && !files.has(p));
-
-const label = { new: 'new      ', update: 'changed  ', same: 'same     ', edited: 'EDITED by you (skipped; --force replaces it)' };
-for (const item of plan.filter((i) => i.state !== 'same')) console.log(`  ${label[item.state].padEnd(9)} ${item.path}`);
-for (const path of obsolete) console.log(`  no longer in the kit (left alone): ${path}`);
-const toWrite = plan.filter((i) => i.state === 'new' || i.state === 'update');
-const skipped = plan.filter((i) => i.state === 'edited');
-console.log(`${toWrite.length} file(s) to write, ${plan.filter((i) => i.state === 'same').length} already current, ${skipped.length} skipped.`);
-
-if (!apply) {
-  console.log(toWrite.length || platform.kitVersion !== remoteInfo.kitVersion ? '\nNothing was written. Run again with --apply to update.' : '\nNothing to do.');
-  process.exit(0);
-}
-for (const item of toWrite) {
-  mkdirSync(dirname(join(root, item.path)), { recursive: true });
-  writeFileSync(join(root, item.path), item.data);
-  installed[item.path] = sha(item.data);
-}
-const manifest = readJson('kit-manifest.json', { files: {} });
-writeFileSync(join(root, 'kit-manifest.json'), `${JSON.stringify({ ...manifest, kitVersion: remoteInfo.kitVersion, files: installed }, null, 2)}\n`);
-writeFileSync(join(root, 'platform.json'), `${JSON.stringify({ ...platform, kitVersion: skipped.length ? platform.kitVersion : remoteInfo.kitVersion, managed }, null, 2)}\n`);
-console.log(`\n✔ Updated ${toWrite.length} file(s)${skipped.length ? `; ${skipped.length} edited file(s) kept as they are (kit version stays ${platform.kitVersion})` : ` to kit ${remoteInfo.kitVersion}`}. Run: npm run check`);
+main().catch((error) => {
+  if (!(error instanceof Stop)) console.error(error);
+  process.exitCode = 1;
+});
