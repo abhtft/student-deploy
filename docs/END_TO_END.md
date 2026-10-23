@@ -173,6 +173,8 @@ What visitors see when something is off: see the error table in [API_REFERENCE.m
 
 ### 3.3a Class AI connector (optional, teacher-controlled)
 
+> Workflow diagrams, the threat model, the IAM matrix and the emergency runbook: **[AI_CONNECTOR.md](AI_CONNECTOR.md)**.
+
 Many students have no AI key. The teacher can give a student's **backend** an AI key that is capped, revocable and metered by OpenRouter, so nothing is typed in and nothing can overspend. It is off by default (`AiEnabled=false`) and per student.
 
 **Teacher** (`/teacher`, student row; needs the Backend on):
