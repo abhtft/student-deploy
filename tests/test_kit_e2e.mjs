@@ -48,7 +48,9 @@ const gateway = async (path, options) => {
 };
 
 try {
-  for (let i = 0; i < 100 && !out.includes('Backend demo:'); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 300 && !out.includes('Backend demo:'); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(out.includes('Backend demo:'), `the dev portal did not start within 30 s:
+${out}`);
   const token = out.match(/Alice\s+(mds_\S+)/)[1];
   const teacher = (await post('/api/teacher/login', { username: 'teacher', password: 'teacher-pass-123' })).body.session;
   const list = await (await fetch(`${URL}/api/admin/tokens`, { headers: { authorization: `Bearer ${teacher}` } })).json();

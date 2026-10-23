@@ -19,7 +19,7 @@ server.stderr.on('data', (d) => (out += d));
 const work = mkdtempSync(join(tmpdir(), 'portal-cli-'));
 
 try {
-  for (let i = 0; i < 100 && !out.includes('Backend demo:'); i++) await new Promise((r) => setTimeout(r, 100));
+  for (let i = 0; i < 300 && !out.includes('Backend demo:'); i++) await new Promise((r) => setTimeout(r, 100));
   const tokens = Object.fromEntries([...out.matchAll(/^\s+(\w+)\s+(mds_\S+)\s+\(expires/gm)].map((m) => [m[1], m[2]]));
   assert.ok(tokens.Alice && tokens.Bob && tokens.Carol && tokens.Erin, `demo tokens not found in:\n${out}`);
 
