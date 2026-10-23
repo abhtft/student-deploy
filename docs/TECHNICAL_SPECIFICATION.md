@@ -78,6 +78,11 @@ Databases or file storage for students, server-side rendering, long-running proc
 
 ### 2.1 Context
 
+<!-- diagram:1725a57b -->
+![Diagram: 2.1 Context](diagrams/technical-specification/01-2-1-context.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 flowchart LR
   T["Teacher"] -->|"tokens, switches, caps"| P["Class platform on AWS"]
@@ -91,7 +96,15 @@ flowchart LR
   P -->|"serves starter-kit.zip"| K
 ```
 
+</details>
+<!-- /diagram -->
+
 ### 2.2 Topology (what runs where)
+
+<!-- diagram:86b4fb82 -->
+![Diagram: 2.2 Topology (what runs where)](diagrams/technical-specification/02-2-2-topology-what-runs-where.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 flowchart TB
@@ -143,6 +156,9 @@ flowchart TB
   CW --> SNS
 ```
 
+</details>
+<!-- /diagram -->
+
 ### 2.3 Components (all defined in `template.yaml` unless noted)
 
 | Component | Logical name | Responsibility |
@@ -179,6 +195,11 @@ flowchart TB
 ## 3. Data and state
 
 ### 3.1 DynamoDB (one table, string key `pk`)
+
+<!-- diagram:ed36d52e -->
+![Diagram: 3.1 DynamoDB (one table, string key pk)](diagrams/technical-specification/03-3-1-dynamodb-one-table-string-key-pk.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 erDiagram
@@ -234,6 +255,9 @@ erDiagram
   }
 ```
 
+</details>
+<!-- /diagram -->
+
 Rules: counters change only through atomic conditional updates (`counter_add` / `counter_sub`), so a limit is exact even with parallel callers. Counter items carry a DynamoDB TTL where they are temporary. Money is stored as whole micro-dollars because DynamoDB has no floats. The plain token is **never** stored: only its SHA-256, and it is shown once at creation.
 
 ### 3.2 S3 (`SitesBucket`, private, versioned)
@@ -251,6 +275,11 @@ Versioning makes an overwritten or deleted file recoverable for 30 days (runbook
 
 **Token status is derived from time and two flags; it is never stored** (so nothing can get out of sync):
 
+<!-- diagram:7e152d05 -->
+![Diagram: 3.3 State machines](diagrams/technical-specification/04-3-3-state-machines.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 stateDiagram-v2
   [*] --> active: created
@@ -265,6 +294,9 @@ stateDiagram-v2
   revoked --> [*]
 ```
 
+</details>
+<!-- /diagram -->
+
 Precedence in `status_of`: `revoked`, then `offline` (archived flag), then `active` (now before `expires_at`), then `expired` (within `OFFLINE_GRACE_DAYS`, default 3), otherwise `offline`. `expired` is read-only for the student; `offline` means the site is archived by the sweeper or by the teacher.
 
 **Regeneration request:** `none` to `pending` (allowed only in the last 3 days before expiry or after it, one at a time) to `approved` (new duration counted from now, brings an archived site back) or `denied` (with a reason).
@@ -272,6 +304,11 @@ Precedence in `status_of`: `revoked`, then `offline` (archived flag), then `acti
 **Backend:** `none` to `creating` (after publish) to `ready` or `failed`, advanced one step per student poll (`GET /api/student/backend`). The teacher's `enabled` flag is independent of this state. Removal returns the state to `none` and keeps the teacher's settings.
 
 **Custom domain:** `none`, `waiting_dns`, `issuing_certificate`, `finishing`, `live`, and `removing`; advanced one step per poll (`GET /api/student/domain/status`).
+
+<!-- diagram:91126943 -->
+![Diagram: 3.3 State machines](diagrams/technical-specification/05-3-3-state-machines.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 stateDiagram-v2
@@ -285,7 +322,15 @@ stateDiagram-v2
   removing --> none: sweeper or next poll finishes
 ```
 
+</details>
+<!-- /diagram -->
+
 **AI key:** works only while the teacher's `enabled` is on **and** the token is `active`.
+
+<!-- diagram:8715e790 -->
+![Diagram: 3.3 State machines](diagrams/technical-specification/06-3-3-state-machines.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 stateDiagram-v2
@@ -295,6 +340,9 @@ stateDiagram-v2
   Active --> Disabled: AI off, revoke, offline, expiry
   Disabled --> Active: AI on again, extend or approve
 ```
+
+</details>
+<!-- /diagram -->
 
 ---
 
@@ -311,6 +359,11 @@ Each feature lists its purpose, the main flow, the rules, the failure behaviour 
 
 ### 4.2 Token lifecycle (F2)
 
+<!-- diagram:50e1c22c -->
+![Diagram: 4.2 Token lifecycle (F2)](diagrams/technical-specification/07-4-2-token-lifecycle-f2.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 sequenceDiagram
   participant T as Teacher page
@@ -326,11 +379,19 @@ sequenceDiagram
   P-->>St: session and token view
 ```
 
+</details>
+<!-- /diagram -->
+
 - **Slug** (site name): teacher-set, else derived from the student name, else random (`s-` plus 6 hex); 1 to 30 characters of `a-z0-9-`, not reserved (`sites uploads archive deploy www api admin mail ftp app apps static assets bs lenden`), not used by a legacy CLI student, unique through the `slug#` lock.
 - **Teacher actions** (`POST /api/admin/tokens/{id}/...`): `revoke` (student cannot sign in or deploy; the live site is unchanged), `extend {days}` (adds to the current expiry, or counts from now if lapsed, and restores an archived site; refused if revoked), `offline` (archives the site now), `approve {days}` and `deny {reason}` for regeneration requests, plus the switches in 4.5 to 4.8. Revoke, extend, approve and offline also **sync the student's AI key** (4.9).
 - **Daily sweeper** (`cron(0 3 * * ? *)` UTC): archives the site of every token past expiry plus grace (moves `sites/<slug>/` to `archive/<slug>/`, never deletes), finishes pending custom-domain removals, and corrects any AI key whose state does not match the token (`ai_keys_changed`). One bad record never stops the rest; a failure raises an error that trips the sweeper alarm, and everything is retried the next day.
 
 ### 4.3 Frontend publishing (F3, F4)
+
+<!-- diagram:451b556c -->
+![Diagram: 4.3 Frontend publishing (F3, F4)](diagrams/technical-specification/08-4-3-frontend-publishing-f3-f4.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -351,6 +412,9 @@ sequenceDiagram
   P-->>S: url, files, removed, warning if the site uses an absolute base path
 ```
 
+</details>
+<!-- /diagram -->
+
 - **Limits:** zip at most 50 MB, unzipped at most 200 MB, at most 2,000 files; names with `__MACOSX/`, `.DS_Store`, `Thumbs.db` are ignored; absolute or `..` paths are refused; `index.html` must be at the top of the zip (a zip of the build folder itself is accepted: one top folder is stripped).
 - **Headers:** HTML gets `public, max-age=0, must-revalidate, s-maxage=31536000`; other files `public, max-age=300, s-maxage=31536000`. CloudFront keeps everything until the next publish invalidates it.
 - **Requires an active token** (`403` otherwise); success records `last_deploy_at`.
@@ -359,6 +423,11 @@ sequenceDiagram
 - **Serving** (`RouterFunction`): the host `<slug>.<RootDomain>` selects `sites/<slug>/`; a last path segment without a dot is a client-side route and becomes `/index.html` (SPA fallback); names failing the slug pattern get 404. Without a `RootDomain` the path form `/<slug>/...` is used.
 
 ### 4.4 Custom domains (F5)
+
+<!-- diagram:4b390b9e -->
+![Diagram: 4.4 Custom domains (F5)](diagrams/technical-specification/09-4-4-custom-domains-f5.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -379,9 +448,17 @@ sequenceDiagram
   P-->>S: live
 ```
 
+</details>
+<!-- /diagram -->
+
 Rules: needs `domain_enabled` set by the teacher, an active token and no existing domain; one domain per student; subdomains only; refused names: the platform's own, AWS addresses, bare apex domains; unique through `domain#<name>` locks. CloudFront refuses to create the tenant until the CNAME is visible, so the first step simply retries. Removal (`DELETE /api/student/domain`) starts `removing`; the next poll or the daily sweeper completes it. Teacher switch off stops *adding*; a live domain keeps working. The multi-tenant distribution is not in CloudFormation: see section 12.3.
 
 ### 4.5 Student backends (F6)
+
+<!-- diagram:59dc968c -->
+![Diagram: 4.5 Student backends (F6)](diagrams/technical-specification/10-4-5-student-backends-f6.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -403,6 +480,9 @@ sequenceDiagram
   end
 ```
 
+</details>
+<!-- /diagram -->
+
 - **Preconditions:** the teacher turned **Backend on**, the token is active (`403 Owner not enabled for you. Please contact site owner.` otherwise).
 - **Package rules:** zip at most 5 MB, 50 MB unzipped, 500 files; exactly one entry file at the top: `index.mjs` or `index.js` (Node 22, handler `index.handler`) or `app.py` (Python 3.12, handler `app.handler`); no `.env*` file, no symlink, no unsafe path; a runtime switch requires removing the backend first.
 - **Function:** name `sd-<slug>`, role `StudentSandboxRole` (may only write its own logs, bounded by `StudentSandboxBoundary`), 256 MB, **10 s** (25 s while AI is on), log group with **7-day** retention, tags `managed-by` and `slug`. Never deleted automatically.
@@ -414,6 +494,11 @@ sequenceDiagram
 ### 4.6 Backend gateway (F7)
 
 Every call to a student backend passes through the gateway:
+
+<!-- diagram:f29f3dec -->
+![Diagram: 4.6 Backend gateway (F7)](diagrams/technical-specification/11-4-6-backend-gateway-f7.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 flowchart TD
@@ -439,6 +524,9 @@ flowchart TD
   K -->|no| E11["429 allowance_exhausted"]
   K -->|yes| L["9 invoke sd-slug, then shape the response, release slots"]
 ```
+
+</details>
+<!-- /diagram -->
 
 - A **run is counted only at step 8**; slots are released in a `finally` block. A slot counter stuck above zero for 60 seconds (a crash between increment and decrement) heals itself.
 - **Settings cache:** a site with a ready backend is cached for 10 s (teacher changes take effect within about 10 s); a site without one for 2 s (a fresh deploy is served within about 2 s).
@@ -469,6 +557,11 @@ flowchart TD
 
 Full detail, diagrams and the threat model are in [AI_CONNECTOR.md](AI_CONNECTOR.md); the binding rules are:
 
+<!-- diagram:bf3fcc23 -->
+![Diagram: 4.9 Class AI connector (F9)](diagrams/technical-specification/12-4-9-class-ai-connector-f9.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 sequenceDiagram
   participant T as Teacher page
@@ -484,6 +577,9 @@ sequenceDiagram
   O-->>F: answer, or 403 when the cap is used, or 401 when disabled
 ```
 
+</details>
+<!-- /diagram -->
+
 - **One management key** in Secrets Manager (`openrouter`, JSON key `OPENROUTER_MANAGEMENT_KEY`), readable only by `DeployFunction` and `SweeperFunction` (one named-secret IAM statement, pinned by a test). It can create and disable keys but cannot make model calls. It is never returned, logged or given to a student's function.
 - **Per student:** their own OpenRouter key with a dollar `limit` (0.01 to 20, default 0.25) and `limit_reset` (`day`, `month`, or none for `total`); the provider enforces the cap. Default model `anthropic/claude-haiku-5.5` (parameter `AiDefaultModel`, per-student override by the teacher).
 - **Order of operations:** switch-off disables the key *before* anything else; switch-on stores the key *before* updating the function; a failure between steps is retried with the same key (no second key). A function that is mid-update answers `409` and the same request is repeated.
@@ -492,6 +588,11 @@ sequenceDiagram
 - **Known measured behaviour:** a capped-out key answers HTTP 403 "Key limit exceeded"; a disabled key 401; the free `:free` models returned 429 in every test, so the paid model is the default; the key can call **any** OpenRouter model (the cap, not a model list, is the control).
 
 ### 4.10 GitHub deploy (F10)
+
+<!-- diagram:c276a5ae -->
+![Diagram: 4.10 GitHub deploy (F10)](diagrams/technical-specification/13-4-10-github-deploy-f10.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -510,11 +611,19 @@ sequenceDiagram
   A-->>GH: green run
 ```
 
+</details>
+<!-- /diagram -->
+
 `student/portal-deploy.mjs` (single dependency-free file) does exactly the portal's flow with the token: sign in, refuse a token that cannot deploy (with the status), deploy `backend/` first (waits until `ready`, up to 120 s), then `frontend/` (runs `npm run build`, finds `dist/`, `build/` or `out/`). Layout options: `--frontend <dir>` (use `.` for an app at the repo root), `--backend <dir>`, `--only`, `--skip-build`. Safety: the repo root is never published as-is, `.env*` and `node_modules` are never included in the frontend zip, `.env*` in the backend is refused before any upload. The token comes from `PORTAL_TOKEN` (environment, `.env.local` or `.env`) and is never written anywhere by the tool. It exits by itself (no `process.exit` after network use). Workflow templates: `student/portal-deploy.yml` (app in `frontend/`) and `student/portal-deploy-root.yml` (app at the repo root).
 
 ### 4.11 Student kit (F11)
 
 The kit makes the student's AI editor build inside the architecture ([STUDENT_KIT.md](STUDENT_KIT.md) has the full text):
+
+<!-- diagram:3b9ec8ec -->
+![Diagram: 4.11 Student kit (F11)](diagrams/technical-specification/14-4-11-student-kit-f11.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 flowchart LR
@@ -529,6 +638,9 @@ flowchart LR
   F -. "problems" .-> D
   H -. "red run: paste the message to the AI" .-> D
 ```
+
+</details>
+<!-- /diagram -->
 
 Enforcement, in four layers: (1) a **working scaffold** in the right layout; (2) **rules** in `AGENTS.md` and identical copies for each editor (`GEMINI.md`, `CLAUDE.md` importing it, a Claude skill, Cursor rules, Copilot instructions, `.windsurfrules`); (3) `npm run check`, about 30 rules that fail the build (layout, backend limits equal to the platform's, non-standard-library imports, syntax errors, AI called from the browser, `localhost` URLs, `VITE_` secrets, tokens and keys in any file, tracked `.env`, missing `.gitignore`); (4) the platform validating every upload server-side.
 
@@ -614,6 +726,8 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 
 ## 7. Build, test and release
 
+> **About the diagrams.** Each diagram is shown as a PNG (works in every viewer) with its Mermaid source collapsed underneath. Edit the Mermaid, then run `node docs/diagrams/render.mjs` (needs Chrome; renders only what changed). `tests/test_diagrams.mjs` fails if a diagram changed without a fresh image.
+
 ### 7.1 Tests (all run by `node tests/run.mjs`, no AWS needed)
 
 | Group | Steps | Scope |
@@ -639,6 +753,11 @@ Techniques: in-memory fakes for S3, Lambda, CloudWatch Logs, CloudFront tenants 
 
 ### 7.3 Release procedure
 
+<!-- diagram:16706a27 -->
+![Diagram: 7.3 Release procedure](diagrams/technical-specification/15-7-3-release-procedure.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 flowchart TD
   A["Change code, tests, docs together"] --> B["node tests/run.mjs: all green"]
@@ -655,6 +774,9 @@ flowchart TD
   J --> K["python tests/live_smoke.py against production"]
   K --> L["Update this specification if behaviour changed; bump kitVersion if the kit changed"]
 ```
+
+</details>
+<!-- /diagram -->
 
 Rules: deploy only from this folder with the safe routine; never execute a change set with an unexplained `Remove` or `Replace`; never run the live smoke test without understanding that it creates and deletes real (temporary) AWS and OpenRouter objects. **Rollback:** revert the commit and redeploy the previous template; restore a file from S3 versions; CloudFormation rolls back a failed update by itself.
 
@@ -751,7 +873,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 ## 11. Quality evidence at baseline
 
-- Local suite: 28 steps green (27 existing plus the specification check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
+- Local suite: 29 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
 - Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks pass; the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
@@ -844,7 +966,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "s3Lifecycle": { "uploadsExpireDays": 1, "noncurrentVersionDays": 30 },
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
   "kitVersion": "1.1.0",
-  "testSteps": 28,
+  "testSteps": 29,
   "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx"]
 }
 ```

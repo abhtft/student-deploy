@@ -111,6 +111,11 @@ await step('specification: the machine-checked facts in docs/TECHNICAL_SPECIFICA
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('diagrams: every Mermaid diagram in the docs has a current static PNG', () => {
+  const r = spawnSync('node', [join(here, 'test_diagrams.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student downloads: published files, the card and both workflows agree', () => {
   const r = spawnSync('node', [join(here, 'test_downloads.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

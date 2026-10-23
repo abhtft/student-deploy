@@ -8,6 +8,11 @@ Companion to [END_TO_END.md](END_TO_END.md), [AI_CONNECTOR.md](AI_CONNECTOR.md) 
 
 ## 1. The student's journey
 
+<!-- diagram:efd1efa7 -->
+![Diagram: 1. The student's journey](diagrams/student-kit/01-1-the-student-s-journey.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 flowchart LR
   A[Teacher gives a token] --> B[Student signs in to the portal<br/>and gets the kit]
@@ -21,6 +26,9 @@ flowchart LR
   F -. problems .-> D
   H -. red run: paste the message to the AI .-> D
 ```
+
+</details>
+<!-- /diagram -->
 
 In words: sign in, get the kit, open it in an AI editor, describe the app, try it locally, check, push. One-time GitHub step: add the token as the repository secret `PORTAL_TOKEN` (the portal gives deep links; the token is never written into a file). After that every push to `main` deploys.
 
@@ -44,12 +52,20 @@ Two files are **single-source** (copied from the platform repo at build time, ne
 
 ## 3. How the architecture is enforced (four layers)
 
+<!-- diagram:70c82faa -->
+![Diagram: 3. How the architecture is enforced (four layers)](diagrams/student-kit/02-3-how-the-architecture-is-enforced-four-layers.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 flowchart TD
   S[1. Scaffold<br/>a working project in the right layout] --> R[2. Rules for the AI<br/>AGENTS.md and copies]
   R --> C[3. npm run check<br/>local, and first step on GitHub]
   C --> P[4. The platform validates every upload<br/>server-side]
 ```
+
+</details>
+<!-- /diagram -->
 
 1. **Scaffold:** the AI edits something that already builds and deploys; it does not invent a project.
 2. **Rules** (`starter/rules/AGENTS.md`): static frontend plus one function; relative `/api` calls; standard library only (nothing is installed on the platform); limits (10 s, 25 s with AI, 256 MB, 5 MB zip); secrets only in portal environment variables; AI only through the backend with `class_ai`; the token never in a file; no databases or server rendering.

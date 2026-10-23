@@ -31,6 +31,11 @@ Diagrams use [Mermaid](https://mermaid.js.org/) (GitHub draws them; each is foll
 
 ## 3. Architecture
 
+<!-- diagram:21ff6ba8 -->
+![Diagram: 3. Architecture](diagrams/ai-connector/01-3-architecture.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
 ```mermaid
 flowchart LR
   T[Teacher page] -->|POST /api/admin/tokens/id/ai| P[Portal API<br/>Deploy function]
@@ -45,11 +50,19 @@ flowchart LR
   SW --> DDB
 ```
 
+</details>
+<!-- /diagram -->
+
 In words: the teacher page calls the portal API, which talks to OpenRouter using the management key and stores the student's key on the token record and in the student's function. A visitor's request goes CloudFront, gateway, student function; the function calls OpenRouter **directly** with the student's key (the platform never sees the prompts or answers). The daily sweeper keeps keys in step with token status.
 
 ## 4. Workflows
 
 ### 4.1 One-time setup (you)
+
+<!-- diagram:98575f47 -->
+![Diagram: 4.1 One-time setup (you)](diagrams/ai-connector/02-4-1-one-time-setup-you.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 flowchart TD
@@ -61,9 +74,17 @@ flowchart TD
   F --> G[Teacher: AI on for a student with Backend on]
 ```
 
+</details>
+<!-- /diagram -->
+
 Full steps: [END_TO_END.md section 4.5c](END_TO_END.md). Never paste the management key into chat, files or the repository (a test fails if a key-like string is committed).
 
 ### 4.2 Teacher switches AI on for a student
+
+<!-- diagram:4cbeaa52 -->
+![Diagram: 4.2 Teacher switches AI on for a student](diagrams/ai-connector/03-4-2-teacher-switches-ai-on-for-a-student.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -83,9 +104,17 @@ sequenceDiagram
   P-->>T: view (no key) with limit, usage, model
 ```
 
+</details>
+<!-- /diagram -->
+
 Steps in words: validate, create the key (or reuse the student's existing one), store it **before** touching anything else, set the key's disabled state to match the token status, save the settings, then update the function. If the function is mid-update the answer is HTTP 409; repeating the same request finishes the job and **never** creates a second key. If the student has no function yet, the first deploy creates it already carrying the variables.
 
 ### 4.3 A student's request uses the AI
+
+<!-- diagram:75516ac0 -->
+![Diagram: 4.3 A student's request uses the AI](diagrams/ai-connector/04-4-3-a-student-s-request-uses-the-ai.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 sequenceDiagram
@@ -109,11 +138,19 @@ sequenceDiagram
   end
 ```
 
+</details>
+<!-- /diagram -->
+
 Two separate meters apply: each request to the function counts as one **run** against the Backend allowance (gateway), and each AI call spends **dollars** against the AI cap (OpenRouter). The timeout chain must stay ordered: student function 25 s, gateway 29 s, HTTP API 30 s (a template test pins it).
 
 ### 4.4 Lifecycle: when the key works
 
 The key works only while **AI is on AND the token is active**.
+
+<!-- diagram:cf179cae -->
+![Diagram: 4.4 Lifecycle: when the key works](diagrams/ai-connector/05-4-4-lifecycle-when-the-key-works.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
 ```mermaid
 stateDiagram-v2
@@ -123,6 +160,9 @@ stateDiagram-v2
   Active --> Disabled: AI off, revoke, offline, or expiry
   Disabled --> Active: AI on again, extend or approve, token active
 ```
+
+</details>
+<!-- /diagram -->
 
 | Event | Effect on the key | When |
 |---|---|---|
