@@ -25,7 +25,7 @@ const work = mkdtempSync(join(tmpdir(), 'kit-mcp-'));
 function client(root, env = {}) {
   const child = spawn(process.execPath, [join(root, 'tools', 'mcp.mjs'), '--root', root], {
     cwd: tmpdir(), // like an editor: the working directory is NOT the project, --root says where it is
-    env: { ...process.env, PORTAL_URL: URL, PORTAL_TOKEN: '', PORTAL_READY_TIMEOUT_MS: '60000', ...env },
+    env: { ...process.env, PORTAL_URL: URL, PLATFORM_PORTAL: URL, PORTAL_TOKEN: '', PORTAL_READY_TIMEOUT_MS: '60000', ...env },
   });
   const lines = [];
   const waiting = new Map();
@@ -83,7 +83,8 @@ try {
   assert.equal(init.result.serverInfo.name, 'class-platform');
   mcp.notify('notifications/initialized');
   const tools = (await mcp.call('tools/list')).result.tools;
-  assert.deepEqual(tools.map((t) => t.name), ['check_project', 'deploy', 'status']);
+  assert.deepEqual(tools.map((t) => t.name), ['check_project', 'deploy', 'status', 'update_kit']);
+  assert.deepEqual(tools.find((t) => t.name === 'update_kit').inputSchema.required, ['confirm']);
   assert.deepEqual(tools.find((t) => t.name === 'deploy').inputSchema.required, ['confirm']);
   assert.equal((await mcp.call('nope')).error.code, -32601);
   assert.equal((await mcp.call('tools/call', { name: 'nope' })).error.code, -32602);
@@ -105,6 +106,7 @@ try {
   const status = await mcp.tool('status');
   assert.equal(status.isError, false, status.content[0].text);
   assert.match(status.content[0].text, /Signed in as .*alice/i);
+  assert.match(status.content[0].text, /Kit \d+\.\d+\.\d+: up to date\./, 'status also says whether the kit is current');
   say('status reads the saved token and reports who is signed in and for how long');
 
   // deploy needs a yes from the student
@@ -134,9 +136,39 @@ try {
 
   const everything = JSON.stringify(mcp.lines);
   assert.ok(!everything.includes(token), 'the token must never appear in anything the server says');
-  mcp.close();
   say('the token appears nowhere in the server\'s output');
 
+  // an out-of-date kit: status says so, update_kit needs a yes, then it updates only the kit's own files
+  const { readFileSync: rf, writeFileSync: wf } = await import('node:fs');
+  const platformPath = join(kit, 'platform.json');
+  const wasVersion = JSON.parse(rf(platformPath, 'utf8')).kitVersion;
+  wf(platformPath, JSON.stringify({ ...JSON.parse(rf(platformPath, 'utf8')), kitVersion: '1.0.0' }, null, 2));
+  const doctor = join(kit, 'tools', 'doctor.mjs');
+  const pristine = rf(doctor, 'utf8');
+  const manifestPath = join(kit, 'kit-manifest.json');
+  const older = '// an older doctor\n';
+  wf(doctor, older);
+  const manifest = JSON.parse(rf(manifestPath, 'utf8'));
+  manifest.files['tools/doctor.mjs'] = (await import('node:crypto')).createHash('sha256').update(older).digest('hex');
+  wf(manifestPath, JSON.stringify(manifest, null, 2));
+  wf(join(kit, 'backend', 'app.py'), `${rf(join(kit, 'backend', 'app.py'), 'utf8')}\n# my own change
+`);
+  const old = await mcp.tool('status');
+  assert.match(old.content[0].text, /Kit: A newer class kit is available \(you have 1\.0\.0.*use update_kit/s);
+  const notYet = await mcp.tool('update_kit', {});
+  assert.equal(notYet.isError, true);
+  assert.match(notYet.content[0].text, /Not updated.*confirm=true/s);
+  assert.equal(rf(doctor, 'utf8'), older, 'nothing changes without a yes');
+  const updated = await mcp.tool('update_kit', { confirm: true });
+  assert.equal(updated.isError, false, updated.content[0].text);
+  assert.match(updated.content[0].text, /Updated .* file\(s\).*Restart this tool server/s);
+  assert.equal(rf(doctor, 'utf8'), pristine, "the kit's own file is back to the portal's version");
+  assert.match(rf(join(kit, 'backend', 'app.py'), 'utf8'), /# my own change/, "the student's code is never touched");
+  assert.equal(JSON.parse(rf(platformPath, 'utf8')).kitVersion, wasVersion);
+  assert.match((await mcp.tool('status')).content[0].text, /up to date/);
+  say('status reports an out-of-date kit; update_kit needs a yes, updates only the kit files and leaves the student code alone');
+
+  mcp.close();
   // a rejected token is explained, not dumped
   const stale = client(kit, { PORTAL_TOKEN: 'mds_thisTokenWasReplaced12345' });
   await stale.call('initialize', { protocolVersion: '2025-06-18' });

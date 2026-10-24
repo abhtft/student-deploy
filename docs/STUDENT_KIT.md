@@ -118,6 +118,8 @@ Two lines in the student's backend: `from class_ai import ask` / `answer = ask("
 
 **Versioning rule:** whenever anything in the kit changes (`starter/`, the rules, `class_ai`, `portal-deploy.mjs`), bump `kitVersion` in `starter/template/platform.json` before publishing, so `status` can tell students a newer kit exists. `update` itself compares file contents, so it also catches changes without a bump.
 
+**Staying in sync (kit 1.5.0):** server-side changes reach every student at once; the kit's own files in a student's folder change only when the student updates. `npm run check` and `npm run deploy` print one line when a newer kit exists (once a day, terminal only), the MCP `status` tool says so and `update_kit` (asks first) applies it. `update` also adds missing kit scripts (for example `login`, `mcp-config`) to `package.json` without touching the student's own. Kits on 1.1 to 1.4 run `node tools/platform.mjs update --apply` twice. A kit below the portal's `minKit` gets a stronger warning. Details: section 4.15 of the specification.
+
 **Updating a student's project later:** `node tools/platform.mjs status` compares the kit version with the portal's; `node tools/platform.mjs update` lists what would change (nothing is written); add `--apply` to write it. It can only touch the platform-managed files named in `platform.json` (the rules for the AI editors, `tools/`, the workflow, `portal-deploy.mjs`, `class_ai`, `PROMPTS.md`), never `frontend/`, the student's backend code or any `.env` file. It checks the downloaded zip against the hash the portal publishes, refuses unsafe paths, and keeps a managed file the student edited unless `--force` is given.
 
 ## 8. Testing

@@ -251,4 +251,5 @@ if (asJson) {
   }
   console.log(errors.length ? `\n${errors.length} problem(s) to fix${warnings.length ? `, ${warnings.length} warning(s)` : ''}. Fix the ✖ items and run: npm run check\nStuck? Paste this whole output to your AI assistant.` : `\nAll good${warnings.length ? ` (${warnings.length} warning(s) above)` : ''}. Push to GitHub to deploy.`);
 }
-process.exit(errors.length ? 1 : 0);
+process.exitCode = errors.length ? 1 : 0;
+if (!asJson) await import('./update-notice.mjs').then((m) => m.updateNotice(root)).catch(() => {}); // one quiet line when a newer kit exists (terminal only)

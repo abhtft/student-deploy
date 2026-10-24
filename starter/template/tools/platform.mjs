@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { missingScripts } from './update-notice.mjs';
 import { readZip } from './zip.mjs';
 
 const args = process.argv.slice(2);
@@ -34,7 +35,7 @@ function fail(message) {
 
 async function main() {
   const platform = readJson('platform.json');
-  const portal = String(option('--portal', platform.portal || '')).replace(/\/$/, '');
+  const portal = String(option('--portal', process.env.PLATFORM_PORTAL || platform.portal || '')).replace(/\/$/, '');
   if (!portal) fail('platform.json has no "portal" address.');
 
   async function download(path) {
@@ -46,7 +47,9 @@ async function main() {
   const remoteInfo = JSON.parse((await download('kit-version.json')).toString('utf8'));
   console.log(`Your kit: ${platform.kitVersion ?? 'unknown'}   Portal kit: ${remoteInfo.kitVersion}`);
   if (command === 'status') {
-    console.log(platform.kitVersion === remoteInfo.kitVersion ? '✔ Up to date.' : 'A newer kit is available: run  node tools/platform.mjs update');
+    const lacking = Object.keys(missingScripts(root, remoteInfo));
+    if (lacking.length) console.log(`package.json is missing kit scripts: ${lacking.join(', ')}  (run: node tools/platform.mjs update --apply)`);
+    console.log(platform.kitVersion === remoteInfo.kitVersion && !lacking.length ? '✔ Up to date.' : platform.kitVersion === remoteInfo.kitVersion ? '' : 'A newer kit is available: run  node tools/platform.mjs update');
     return;
   }
   if (command !== 'update') fail('Usage: node tools/platform.mjs status | update [--apply] [--force]');
@@ -76,21 +79,31 @@ async function main() {
   }
   const obsolete = Object.keys(installed).filter((p) => isManaged(p) && !files.has(p));
 
+  // scripts: add the ones package.json lacks (never change or remove one the student has; only plain `node tools/...` commands from the portal)
+  const newScripts = missingScripts(root, remoteInfo);
   const label = { new: 'new      ', update: 'changed  ', same: 'same     ', edited: 'EDITED by you (skipped; --force replaces it)' };
   for (const item of plan.filter((i) => i.state !== 'same')) console.log(`  ${label[item.state].padEnd(9)} ${item.path}`);
   for (const path of obsolete) console.log(`  no longer in the kit (left alone): ${path}`);
   const toWrite = plan.filter((i) => i.state === 'new' || i.state === 'update');
   const skipped = plan.filter((i) => i.state === 'edited');
+  for (const [name, command] of Object.entries(newScripts)) console.log(`  script    npm run ${name}  (${command})`);
   console.log(`${toWrite.length} file(s) to write, ${plan.filter((i) => i.state === 'same').length} already current, ${skipped.length} skipped.`);
 
   if (!apply) {
-    console.log(toWrite.length || platform.kitVersion !== remoteInfo.kitVersion ? '\nNothing was written. Run again with --apply to update.' : '\nNothing to do.');
+    console.log(toWrite.length || platform.kitVersion !== remoteInfo.kitVersion || Object.keys(newScripts).length ? '\nNothing was written. Run again with --apply to update.' : '\nNothing to do.');
     return;
   }
   for (const item of toWrite) {
     mkdirSync(dirname(join(root, item.path)), { recursive: true });
     writeFileSync(join(root, item.path), item.data);
     installed[item.path] = sha(item.data);
+  }
+  if (Object.keys(newScripts).length) {
+    const raw = readFileSync(join(root, 'package.json'), 'utf8');
+    const pkg = JSON.parse(raw);
+    pkg.scripts = { ...(pkg.scripts ?? {}), ...newScripts };
+    writeFileSync(join(root, 'package.json'), `${JSON.stringify(pkg, null, /\n(\t)/.test(raw) ? '\t' : 2)}\n`);
+    console.log(`Added ${Object.keys(newScripts).length} script(s) to package.json: ${Object.keys(newScripts).join(', ')}`);
   }
   const manifest = readJson('kit-manifest.json', { files: {} });
   writeFileSync(join(root, 'kit-manifest.json'), `${JSON.stringify({ ...manifest, kitVersion: remoteInfo.kitVersion, files: installed }, null, 2)}\n`);

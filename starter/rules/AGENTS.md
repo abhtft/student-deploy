@@ -137,6 +137,8 @@ When the student says "deploy", "publish" or "put it online":
 
 **If your editor has the `class-platform` tools** (VS Code: the project's `.vscode/mcp.json`; Antigravity: the student pasted the snippet from `npm run mcp-config`), use them instead of the terminal: `check_project`, then ask the student "publish now?", then `deploy` with `confirm=true` only after they say yes; `status` tells whether the token is valid. The tools refuse to deploy a project that fails the check. The token still comes from `npm run login`; the tools never ask for it.
 
+**Keeping the kit current.** `npm run check` and `npm run deploy` print one line when a newer class kit exists (and the `status` tool says so). Tell the student in plain words, and offer to update: with the tools, call `update_kit` with `confirm=true` after a yes; otherwise `npm run platform -- update --apply` (add `-- update` alone first to preview). It only replaces the kit's own files, never the student's code, and it keeps any kit file the student edited. After an update run `npm run check`.
+
 Deploying from GitHub (push to `main`) is the alternative for students who use GitHub; it does not need `npm run login`.
 
 ## First-time setup for the student (once)

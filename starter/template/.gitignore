@@ -13,8 +13,9 @@ __pycache__/
 !.env.example
 *.local
 
-# the local stand-in for class storage (npm run dev)
+# the local stand-in for class storage (npm run dev), and the once-a-day kit version check
 .class-storage/
+.platform-notice.json
 
 # editor and OS files
 .DS_Store

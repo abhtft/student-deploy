@@ -123,6 +123,11 @@ await step('class storage helpers (Python and Node) against the real storage API
   }
 });
 
+await step('student kit update notice: one quiet line once a day, never in CI, piped output or --json, silent offline; minimum kit version', () => {
+  const r = spawnSync('node', [join(here, 'test_update_notice.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student kit MCP server: handshake, check, status and deploy tools, confirm required, token never echoed', () => {
   const r = spawnSync('node', [join(here, 'test_mcp.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

@@ -85,7 +85,7 @@ if (command === 'add') {
   const { buildKitZip } = await import('./starter/build-kit.mjs');
   const kitTemp = mkdtempSync(join(tmpdir(), 'kit-publish-'));
   const kit = buildKitZip(join(kitTemp, 'starter-kit.zip'));
-  writeFileSync(join(kitTemp, 'kit-version.json'), `${JSON.stringify({ kit: 'class-platform-starter', kitVersion: kit.version, zipSha256: kit.sha256, files: kit.files }, null, 2)}
+  writeFileSync(join(kitTemp, 'kit-version.json'), `${JSON.stringify({ kit: 'class-platform-starter', kitVersion: kit.version, minKit: kit.minKit, scripts: kit.scripts, zipSha256: kit.sha256, files: kit.files }, null, 2)}
 `);
   uploads.push(['starter-kit.zip', join(kitTemp, 'starter-kit.zip')], ['kit-version.json', join(kitTemp, 'kit-version.json')]);
   const files = uploads.map(([name]) => name);

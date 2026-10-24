@@ -78,7 +78,10 @@ export function buildKit(out, { force = false } = {}) {
   const platform = JSON.parse(readFileSync(join(out, 'platform.json'), 'utf8'));
   const files = Object.fromEntries(listFiles(out).map((f) => [relative(out, f).split(sep).join('/'), createHash('sha256').update(readFileSync(f)).digest('hex')]).sort());
   writeFileSync(join(out, 'kit-manifest.json'), `${JSON.stringify({ kit: platform.kit, kitVersion: platform.kitVersion, files }, null, 2)}\n`);
-  return { out, version: platform.kitVersion, files: Object.keys(files).length + 1 };
+  // what the portal publishes next to the zip (kit-version.json): the oldest kit it still fully supports, and the package.json scripts the kit owns
+  const pkgScripts = JSON.parse(readFileSync(join(out, 'package.json'), 'utf8')).scripts ?? {};
+  const scripts = Object.fromEntries((platform.managedScripts ?? []).filter((name) => name in pkgScripts).map((name) => [name, pkgScripts[name]]));
+  return { out, version: platform.kitVersion, minKit: platform.minKit ?? '0', scripts, files: Object.keys(files).length + 1 };
 }
 
 /** Build the kit and write it as ONE zip file (deterministic: the same kit always gives the same bytes). Returns {version, sha256, files}. */
@@ -86,12 +89,12 @@ export function buildKitZip(zipFile) {
   const temp = mkdtempSync(join(tmpdir(), 'kit-zip-'));
   try {
     const kit = join(temp, 'kit');
-    const { version } = buildKit(kit);
+    const { version, minKit, scripts } = buildKit(kit);
     const entries = listFiles(kit).map((f) => ({ name: relative(kit, f).split(sep).join('/'), data: readFileSync(f) }));
     const zip = zipEntries(entries);
     mkdirSync(dirname(resolve(zipFile)), { recursive: true });
     writeFileSync(zipFile, zip);
-    return { version, sha256: createHash('sha256').update(zip).digest('hex'), files: entries.length };
+    return { version, minKit, scripts, sha256: createHash('sha256').update(zip).digest('hex'), files: entries.length };
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }

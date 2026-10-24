@@ -16,6 +16,7 @@
 // No npm install needed - only Node 20+. In GitHub Actions store the token as the secret PORTAL_TOKEN.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
 import { deflateRawSync } from 'node:zlib';
 
@@ -300,6 +301,9 @@ async function main() {
 
   if (doBackend) await deployBackend(session, backendDir);
   if (doFrontend) await deployFrontend(session, frontendDir);
+  // inside the student kit: one quiet line when a newer kit exists (a terminal only; this file also runs alone, so it is optional)
+  const notice = join(process.cwd(), 'tools', 'update-notice.mjs');
+  if (existsSync(notice)) await import(pathToFileURL(notice).href).then((m) => m.updateNotice(process.cwd())).catch(() => {});
 }
 
 // (tests import editLine and maskSecret without starting a deploy)

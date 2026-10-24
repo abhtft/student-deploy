@@ -4,7 +4,8 @@
 //
 //   check_project   the same as `npm run check`
 //   deploy          check first, then the same as `npm run deploy` (it asks you for a yes before it publishes)
-//   status          is your saved token valid, and for how many days
+//   status          is your saved token valid, and for how many days; and whether a newer class kit is available
+//   update_kit      bring the kit's own files up to date (it asks you for a yes first; same as `npm run platform -- update --apply`)
 //
 // The token is NOT in the editor's settings: run `npm run login` once in a terminal, the tools read it from .env.local like `npm run deploy` does.
 //
@@ -15,6 +16,7 @@ import { readFileSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { kitStatus, noticeText } from './update-notice.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
@@ -91,7 +93,22 @@ const TOOLS = [
     name: 'status',
     description: 'Say whether the saved portal token is valid and for how many days. Deploys nothing. If it says no token is found, the student must run "npm run login" in their own terminal (never ask them to paste the token to you).',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
-    run: () => run('portal-deploy.mjs', ['status'], 60000),
+    async run() {
+      const token = await run('portal-deploy.mjs', ['status'], 60000);
+      const kit = await kitStatus(root, { fresh: true });
+      const kitLine = !kit ? 'Kit: could not reach the portal to compare versions.' : noticeText(kit) ? noticeText(kit).replace(/^[^A-Za-z]+/, 'Kit: ') + ' (ask the student, then use update_kit)' : `Kit ${kit.mine}: up to date.`;
+      return { ok: token.ok, text: `${token.text}\n${kitLine}`.trim() };
+    },
+  },
+  {
+    name: 'update_kit',
+    description: 'Bring the class kit\'s own files (the rules for AI editors, tools/, the deploy script, the helpers class_ai and class_storage, the check) up to date from the portal. It never touches the student\'s own code, .env files or files the student edited. IMPORTANT: ask the student first and call this with confirm=true only after they say yes. Afterwards tell them to restart this tool server (or reload the editor) so the new tools are used.',
+    inputSchema: { type: 'object', properties: { confirm: { type: 'boolean', description: 'true only after the student agreed to update' } }, required: ['confirm'], additionalProperties: false },
+    async run({ confirm }) {
+      if (confirm !== true) return { ok: false, text: 'Not updated. Ask the student whether to update the kit now; if they say yes, call update_kit again with confirm=true.' };
+      const done = await run('tools/platform.mjs', ['update', '--apply'], 120000);
+      return { ok: done.ok, text: done.ok ? `${done.text}\n\nRestart this tool server (or reload the editor) so the updated tools are used.` : done.text };
+    },
   },
 ];
 

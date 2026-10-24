@@ -47,7 +47,10 @@ def kit_file(name):
         import hashlib
         platform_json = json.load(open(os.path.join(here, "..", "starter", "template", "platform.json"), encoding="utf8"))
         _kit["starter-kit.zip"] = data
-        _kit["kit-version.json"] = json.dumps({"kit": "class-platform-starter", "kitVersion": platform_json["kitVersion"], "zipSha256": hashlib.sha256(data).hexdigest()}).encode()
+        package_scripts = json.load(open(os.path.join(here, "..", "starter", "template", "package.json"), encoding="utf8")).get("scripts", {})
+        scripts = {n: package_scripts[n] for n in platform_json.get("managedScripts", []) if n in package_scripts}
+        _kit["kit-version.json"] = json.dumps({"kit": "class-platform-starter", "kitVersion": platform_json["kitVersion"], "minKit": platform_json.get("minKit", "0"), "scripts": scripts,
+                                               "zipSha256": hashlib.sha256(data).hexdigest()}).encode()
     return _kit[name]
 
 
