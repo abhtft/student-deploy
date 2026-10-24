@@ -30,7 +30,7 @@ flowchart LR
 </details>
 <!-- /diagram -->
 
-In words: sign in, get the kit, open it in an AI editor, describe the app, try it locally, check, push. One-time GitHub step: add the token as the repository secret `PORTAL_TOKEN` (the portal gives deep links; the token is never written into a file). After that every push to `main` deploys.
+In words: sign in, get the kit, open it in an AI editor, describe the app, try it locally, check, push. Two ways to publish, same result. **From the computer, no GitHub:** `npm run login` once (asks for the token with hidden input, checks it with the portal, saves it in the git-ignored `.env.local`; it refuses to write if git would not ignore that file), then `npm run deploy` after each change. **From GitHub:** add the token as the repository secret `PORTAL_TOKEN` (the portal gives deep links); after that every push to `main` deploys. The AI-editor rules have a "Deploying" section: check, deploy, read the address back; if there is no token or it is not accepted, the student runs `npm run login` themselves (the assistant never runs it, reads `.env.local` or asks for the token).
 
 ## 2. What is in the kit
 

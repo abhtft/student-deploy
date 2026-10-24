@@ -5,6 +5,7 @@
 //   node portal-deploy.mjs --only frontend  (or: --only backend)
 //   node portal-deploy.mjs --skip-build    deploy the frontend's existing build folder
 //   node portal-deploy.mjs --frontend web --backend api    use other folder names
+//   node portal-deploy.mjs login           save your token once (asks for it, checks it, writes .env.local); `npm run login`
 //
 // Expected layout:   frontend/  your app (built with `npm run build` into dist/, build/ or out/)
 //                    backend/   index.mjs (Node) or app.py (Python) at its top level
@@ -12,7 +13,9 @@
 //
 // Your token is read from PORTAL_TOKEN (environment, .env.local or .env). Never commit it.
 // No npm install needed - only Node 20+. In GitHub Actions store the token as the secret PORTAL_TOKEN.
-import { existsSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+import { Writable } from 'node:stream';
 import { join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { deflateRawSync } from 'node:zlib';
@@ -43,7 +46,40 @@ function readToken() {
     const match = readFileSync(file, 'utf8').match(/^\s*PORTAL_TOKEN\s*=\s*["']?([^"'\s]+)/m);
     if (match) return match[1];
   }
-  return fail('PORTAL_TOKEN not found. Add this line to .env.local (never commit it):\n  PORTAL_TOKEN=mds_xxxxxxxx\nIn GitHub Actions, add it as a repository secret named PORTAL_TOKEN.');
+  return null;
+}
+
+/** One line from the keyboard. With `hidden` the typed or pasted characters are not shown (a token is a password). Piped input works too. */
+async function ask(question, { hidden = false } = {}) {
+  process.stdout.write(question);
+  if (!process.stdin.isTTY) {
+    let data = '';
+    for await (const chunk of process.stdin) { data += chunk; if (data.includes('\n')) break; }
+    return data.split(/\r?\n/)[0].trim();
+  }
+  const quiet = new Writable({ write: (_chunk, _encoding, done) => done() });
+  const rl = createInterface({ input: process.stdin, output: hidden ? quiet : process.stdout, terminal: true });
+  return new Promise((resolve) => {
+    rl.once('line', (line) => { rl.close(); if (hidden) process.stdout.write('\n'); resolve(line.trim()); });
+    rl.once('close', () => resolve(''));
+  });
+}
+
+/** `login`: ask for the token, check it with the portal, save it to .env.local. The token is never printed. */
+async function login(given) {
+  if (!given) console.log('Paste your portal token (the one your teacher gave you). What you paste is hidden. Press Enter when done.');
+  const token = (given ?? await ask('Token: ', { hidden: true })).replace(/^["']|["']$/g, '');
+  if (!/^[\w.~-]{8,}$/.test(token)) fail('That does not look like a portal token (it starts with mds_ and has no spaces). Copy it again from your teacher or the portal.');
+  // never write a secret to a file that git would pick up: .env.local must be ignored
+  if (spawnSync('git', ['check-ignore', '-q', '.env.local']).status === 1) fail('.env.local is not ignored by git, so saving the token there could publish it. Add the lines  .env  and  .env.*  to .gitignore (npm run check explains), then run this again.');
+  const info = await signIn(token);
+  const file = '.env.local';
+  const line = `PORTAL_TOKEN=${token}`;
+  const text = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  const replaced = /^\s*#?\s*PORTAL_TOKEN\s*=.*$/m.test(text) ? text.replace(/^\s*#?\s*PORTAL_TOKEN\s*=.*$/m, line) : `${text}${text && !text.endsWith('\n') ? '\n' : ''}${line}\n`;
+  writeFileSync(file, replaced);
+  console.log(`✔ Saved. Signed in as ${info.name} (${info.slug}); the token is valid for ${info.daysLeft} more day${info.daysLeft === 1 ? '' : 's'}. It is stored in .env.local, which stays on this computer.`);
+  console.log('Now deploy with:  npm run deploy');
 }
 
 // ---------- API ----------
@@ -61,6 +97,16 @@ async function api(method, path, { session, body } = {}) {
 async function putZip(uploadUrl, zip) {
   const put = await fetch(uploadUrl, { method: 'PUT', body: zip }).catch((e) => fail(`Upload failed (${e.cause?.code || e.message}).`));
   if (!put.ok) fail(`Upload failed (HTTP ${put.status}).`);
+}
+
+async function signIn(token) {
+  const res = await fetch(`${PORTAL_URL}/api/student/login`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token }) })
+    .catch((e) => fail(`Cannot reach the portal (${e.cause?.code || e.message}). Check your internet connection.`));
+  const data = await res.json().catch(() => ({}));
+  if (res.status === 401 || res.status === 403 || res.status === 404) fail('The portal does not accept this token. It may be mistyped, expired or replaced by a newer one. Run  npm run login  and paste the current token (ask your teacher if you are unsure).');
+  if (!res.ok) fail(`${data.error || data.message || 'Sign-in failed'} (HTTP ${res.status})`);
+  const daysLeft = Math.ceil((data.token.expires_at - Date.now() / 1000) / 86400);
+  return { ...data, name: data.token.student_name || data.token.slug, slug: data.token.slug, daysLeft };
 }
 
 // ---------- ZIP (deflate, UTF-8 names) so students need no extra tools ----------
@@ -189,6 +235,7 @@ async function deployBackend(session, dir) {
 
 // ---------- main ----------
 async function main() {
+  if (args[0] === 'login') return login(option('--token'));
   const only = option('--only');
   if (only && !['frontend', 'backend'].includes(only)) fail('--only must be "frontend" or "backend".');
   const frontendDir = option('--frontend', 'frontend');
@@ -199,9 +246,15 @@ async function main() {
   if (only === 'frontend' && !existsSync(frontendDir)) fail(`The folder ${frontendDir}/ does not exist here.`);
   if (!doBackend && !doFrontend) fail(`Nothing to deploy: no ${frontendDir}/ or ${backendDir}/ folder here. Run this from the root of your project.`);
 
-  const { session, token } = await api('POST', '/api/student/login', { body: { token: readToken() } });
+  let saved = readToken();
+  if (!saved) {
+    if (!process.stdin.isTTY) fail('No token found. Run  npm run login  once (it asks for your token and saves it), or set PORTAL_TOKEN. In GitHub Actions add it as a repository secret named PORTAL_TOKEN.');
+    console.log('No token saved yet, so let us do that now.');
+    await login();
+    saved = readToken();
+  }
+  const { session, token, daysLeft } = await signIn(saved);
   if (!token.can_deploy) fail(`Your token cannot deploy right now (status: ${token.status}). Ask your teacher, or request regeneration on the portal.`);
-  const daysLeft = Math.ceil((token.expires_at - Date.now() / 1000) / 86400);
   console.log(`▶ Signed in as ${token.student_name || token.slug} (${token.slug}). Token valid for ${daysLeft} more day${daysLeft === 1 ? '' : 's'}.`);
   if (daysLeft <= 3) console.warn('⚠ Your token expires soon. Request regeneration on the portal so deploys keep working.');
 

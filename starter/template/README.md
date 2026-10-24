@@ -1,6 +1,6 @@
 # My class project
 
-A website (`frontend/`) and one backend function (`backend/`), hosted on your class platform. Push to GitHub and it deploys by itself.
+A website (`frontend/`) and one backend function (`backend/`), hosted on your class platform. Deploy it with one command, or push to GitHub and it deploys by itself.
 
 ## Start in 6 steps
 
@@ -9,14 +9,15 @@ A website (`frontend/`) and one backend function (`backend/`), hosted on your cl
    If your assistant seems unaware of them, tell it: *"Read AGENTS.md and follow it."*
 3. **Tell the AI what to build.** Ideas to copy are in `PROMPTS.md`.
 4. **Try it on your computer:** `npm run dev` (open http://localhost:3000). The AI answers are an offline mock here, so nothing is spent.
-5. **Check it, then push to GitHub:**
+5. **Put it online, no GitHub needed:**
    ```
+   npm run login      (once: paste your token, it is hidden and saved only on this computer)
    npm run check
-   git add -A && git commit -m "my first change" && git push
+   npm run deploy
    ```
-   (the first time: create a GitHub repository and connect this folder to it; your AI assistant can walk you through it)
-6. **One-time GitHub setup:** repository > *Settings* > *Secrets and variables* > *Actions* > *New repository secret*, name `PORTAL_TOKEN`, value = your token. Then push again.
-   Open the **Actions** tab: when it turns green, your site is live. Never write your token into a file.
+   Your site is live at the address the portal shows. Run `npm run deploy` again after each change.
+6. **Optional: automatic deploy from GitHub.** Create a GitHub repository for this folder, then repository > *Settings* > *Secrets and variables* > *Actions* > *New repository secret*, name `PORTAL_TOKEN`, value = your token. Then push again.
+   Push to `main`; the **Actions** tab turns green when your site is live. Never write your token into a file yourself: `npm run login` stores it safely.
 
 ## What is where
 
@@ -25,7 +26,7 @@ A website (`frontend/`) and one backend function (`backend/`), hosted on your cl
 | `frontend/` | your website (React + Vite). Calls the backend with `fetch('/api/...')` |
 | `backend/` | your function (Python). `app.py` has the routes; `class_ai.py` is the class AI helper (do not edit) |
 | `variants/node-backend/` | the same backend in Node, if you prefer JavaScript (see `AGENTS.md`) |
-| `tools/` | `npm run dev`, `npm run check`, `npm run doctor` |
+| `tools/` | `npm run dev`, `npm run check`, `npm run doctor` (and `npm run login`, `npm run deploy` at the project root) |
 | `.github/workflows/deploy.yml` | the automatic deploy |
 | `AGENTS.md` | the rules your AI assistant follows |
 

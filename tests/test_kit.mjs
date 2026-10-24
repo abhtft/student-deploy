@@ -145,6 +145,21 @@ const quiet = check(calm);
 assert.equal(quiet.status, 0, JSON.stringify(quiet.json.results.filter((r) => r.level === 'error')));
 say('comments, docstrings and placeholders such as mds_xxxxxxxx do not trigger errors');
 
+// a token saved by `npm run login` lives in .env.local: that is allowed, but never when git would track it
+const saved = join(work, 'saved-token');
+cpSync(kit, saved, { recursive: true });
+writeFileSync(join(saved, '.env.local'), `PORTAL_TOKEN=${fakeToken}
+`);
+const savedRun = check(saved);
+assert.equal(savedRun.status, 0, JSON.stringify(savedRun.json.results.filter((r) => r.level === 'error')));
+fixture('env-committed', 'error', (d) => {
+  writeFileSync(join(d, '.env.local'), `PORTAL_TOKEN=${fakeToken}
+`);
+  spawnSync('git', ['init', '-q'], { cwd: d });
+  spawnSync('git', ['add', '-f', '.env.local'], { cwd: d });
+});
+say('a token saved by npm run login in .env.local passes the check; the same file tracked by git is an error');
+
 // the human-readable report carries a fix line and a hint to ask the AI
 const broken = join(work, 'readable');
 cpSync(kit, broken, { recursive: true });

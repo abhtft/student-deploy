@@ -12,7 +12,7 @@ rules. Follow them exactly: the app is checked by `npm run check` before every d
 | Backend | **One function** in `backend/`: Python 3.12 (`app.py`) **or** Node 22 (`index.mjs`). No server process, no framework that listens on a port. |
 | Address | The site is `https://<name>.margdarshakss.com`. The backend is reached at **`/api/...` on the same address** (the `/api` prefix is removed before your function sees the path). No CORS needed. |
 | Class AI | The teacher can switch on an AI key for the student's backend. The helper `class_ai` makes the call in one line. |
-| Deploy | Push to GitHub `main`: a GitHub Action runs `npm run check`, then deploys backend and frontend. |
+| Deploy | Two ways, same result. **From the computer:** `npm run login` once, then `npm run deploy` (no GitHub needed). **From GitHub:** push to `main` and a GitHub Action runs `npm run check`, then deploys. |
 
 **Does not work here** (tutorials often assume these, so say so plainly if the student asks): Express, Flask, Django, FastAPI or any server
 that listens on a port; MongoDB, MySQL, PostgreSQL or any database server; Firebase Admin; Next.js server apps and server-side rendering;
@@ -34,7 +34,7 @@ route, `localStorage`, or an external HTTP service called from the backend: see 
 5. **Backend uses only the standard library** (Python) or Node 22 built-ins (Node). The platform installs nothing. If a package is truly needed, bundle it into the backend folder. Use `urllib.request` / `fetch` for HTTP.
 6. **Backend limits:** 10 seconds per request (25 s while the class AI is on), 256 MB, request and response at most 1 MB, the backend folder at most 500 files and 5 MB zipped. Keep text answers short (`max_tokens` 200-400); lists or JSON may need up to 800.
 7. **Secrets:** a backend secret (a database URL, another service's key) is set by the student in the portal (Backend card > Environment variables) and read with `os.environ["NAME"]` / `process.env.NAME`. Never write a secret into any file, never create `.env` inside `backend/`. For local runs only, `.env.local` at the project root is allowed (it is git-ignored).
-8. **The portal token is never written to any file.** It lives only in the GitHub repository secret `PORTAL_TOKEN`. **If the student pastes a real key or token into the chat, do not use it and do not store it anywhere**; tell them to revoke or regenerate it (an AI key at its provider, the portal token via the teacher) and explain where such a value belongs.
+8. **The portal token lives in exactly two places:** the GitHub repository secret `PORTAL_TOKEN`, and `.env.local` (git-ignored), which only `npm run login` writes. Never write it into any other file, never print it, **never open or read `.env.local`**, and never ask the student to paste it to you. **If the student pastes a real key or token into the chat, do not use it and do not store it anywhere**; tell them to revoke or regenerate it (an AI key at its provider, the portal token via the teacher) and explain where such a value belongs.
 9. **One backend language.** `app.py` **or** `index.mjs`, not both. To switch to Node: delete `backend/app.py` and `backend/class_ai.py`, then move the files from `variants/node-backend/` into `backend/` (and delete the `variants/` folder).
 10. **Do not edit** `.github/workflows/deploy.yml`, `portal-deploy.mjs`, `tools/` or `platform.json` unless the student's teacher asked for it.
 
@@ -104,6 +104,8 @@ There is **no database**. Choose the simplest option and **tell the student its 
 | `npm run check` | The platform check: layout, limits, imports, secrets. **Run it before every commit.** |
 | `npm run build` | Builds the site into `frontend/dist`. |
 | `npm run doctor` | Checks Node, Python and git on the computer. |
+| `npm run login` | **The student runs this themselves, once.** It asks for the portal token (hidden), checks it and saves it in `.env.local`. |
+| `npm run deploy` | Publishes the backend, then the frontend, straight from this computer. |
 
 ## How to work
 
@@ -111,9 +113,24 @@ There is **no database**. Choose the simplest option and **tell the student its 
 - Read the check output: every `✖` has a `fix:` line. Do not silence the check, edit it, or work around it.
 - Prefer small, readable code with short comments. This is a learning project: explain choices in plain words.
 - Send the AI only what it needs (a topic, task names), not private data.
-- Before finishing a task, tell the student: what changed, how to try it locally, any limits (for example "saved in this browser only"), and "commit and push to `main` to deploy".
+- Before finishing a task, tell the student: what changed, how to try it locally, any limits (for example "saved in this browser only"), and how to deploy (see "Deploying").
+
+## Deploying
+
+When the student says "deploy", "publish" or "put it online":
+
+1. Run `npm run check`. If it reports a `✖`, fix it first; never skip the check.
+2. Run `npm run deploy` and read the result back to the student: the site address printed after "Frontend live at", and whether the backend is ready.
+3. If it says **No token found** (or the token is not accepted / expired), the student must run **`npm run login`** in their own terminal and paste the token there (it is hidden). Do not run it for them, do not ask for the token, and do not look for it in any file. Then run `npm run deploy` again.
+4. If it says the token cannot deploy (expired), tell the student to ask the teacher for an extension or regeneration on the portal.
+
+Deploying from GitHub (push to `main`) is the alternative for students who use GitHub; it does not need `npm run login`.
 
 ## First-time setup for the student (once)
+
+**From this computer (no GitHub):** run `npm run login`, paste the token from the teacher, then `npm run deploy`. That is all.
+
+**With GitHub (automatic deploy on every push):**
 
 1. Create a GitHub repository for this folder and push it.
 2. GitHub > the repository > Settings > Secrets and variables > Actions > **New repository secret**: name `PORTAL_TOKEN`, value = the token from the teacher.
@@ -124,6 +141,7 @@ There is **no database**. Choose the simplest option and **tell the student its 
 | Symptom | Likely cause and fix |
 |---|---|
 | Action fails at "Platform check" | Run `npm run check` locally and fix each `✖`. |
+| `npm run deploy` says no token / the token is not accepted | The student runs `npm run login` and pastes the current token (a regenerated token replaces the old one). |
 | Action fails at "Deploy" with 401 | The `PORTAL_TOKEN` secret is wrong or the token was revoked: set it again or ask the teacher. |
 | Deploy says the token cannot deploy (expired) | Ask the teacher for an extension, then run the workflow again. |
 | "Owner not enabled for you" | The teacher has not switched on the Backend (or AI) for this student. |

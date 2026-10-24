@@ -199,13 +199,14 @@ const PATTERNS = [
 let secretsFound = false;
 for (const file of walk(root)) {
   if (/\.(png|jpe?g|gif|webp|ico|svg|woff2?|ttf|zip|pdf|lock)$/i.test(file.rel) || file.rel.endsWith('package-lock.json')) continue;
+  if (file.rel === '.env.local') continue; // where `npm run login` keeps the token; the checks below refuse it if git would track it
   const text = readText(file);
   if (text === null) continue;
   for (const [id, pattern, label] of PATTERNS) {
     if (pattern.test(text)) {
       secretsFound = true;
       add('error', id, `${file.rel} contains ${label}.`, id === 'secret-token'
-        ? 'Remove it from the file. The portal token only goes into the GitHub secret PORTAL_TOKEN (and, if you must, .env.local, which is not committed). If it was ever pushed, ask your teacher to regenerate it.'
+        ? 'Remove it from the file. The portal token only goes into the GitHub secret PORTAL_TOKEN (and `npm run login` keeps it in .env.local, which stays on your computer). If it was ever pushed, ask your teacher to regenerate it.'
         : 'Remove it from the file and revoke the key (it counts as leaked once pushed). Backend secrets go in the portal\'s Environment variables.');
     }
   }

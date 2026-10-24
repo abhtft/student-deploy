@@ -1,7 +1,7 @@
 // End to end for student/portal-deploy.mjs: the real CLI -> the whole dev server (real portal, gateway and Lambda code on in-memory AWS).
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -113,14 +113,14 @@ try {
   const erin = run(project('erin'), tokens.Erin);
   check('revoked token is refused at sign-in', () => {
     assert.notEqual(erin.status, 0);
-    assert.match(erin.stderr, /401/);
+    assert.match(erin.stderr, /does not accept this token.*npm run login/s);
   });
   const none = run(project('nobody'), 'mds_notarealtoken');
   check('unknown token is refused', () => assert.notEqual(none.status, 0));
   const missing = run(project('notoken'), '');
   check('no token: explains how to set PORTAL_TOKEN', () => {
     assert.notEqual(missing.status, 0);
-    assert.match(missing.stderr, /PORTAL_TOKEN not found/);
+    assert.match(missing.stderr, /No token found.*npm run login/s);
   });
 
   // 4. local mistakes are caught before anything is uploaded
@@ -144,6 +144,50 @@ try {
     assert.notEqual(empty.status, 0);
     assert.match(empty.stderr, /Nothing to deploy/);
   });
+
+  // 5. `login`: asks for the token, checks it, saves it to .env.local; the token is never printed
+  const login = (cwd, input, ...args) => spawnSync('node', [join(root, 'student', 'portal-deploy.mjs'), 'login', ...args], {
+    cwd, input, encoding: 'utf8', env: { ...process.env, PORTAL_URL: URL, PORTAL_TOKEN: '' },
+  });
+  const fresh = project('login-ok', { backend: false });
+  const loggedIn = login(fresh, `${tokens.Alice}\n`);
+  check('login: a valid token is saved to .env.local and never printed', () => {
+    assert.equal(loggedIn.status, 0, loggedIn.stdout + loggedIn.stderr);
+    assert.match(readFileSync(join(fresh, '.env.local'), 'utf8'), new RegExp(`^PORTAL_TOKEN=${tokens.Alice}\n$`));
+    assert.match(loggedIn.stdout, /Signed in as .*alice/i);
+    assert.doesNotMatch(loggedIn.stdout + loggedIn.stderr, new RegExp(tokens.Alice));
+  });
+  const afterLogin = run(fresh, '', '--only', 'frontend');
+  check('after login, npm run deploy needs nothing else', () => assert.equal(afterLogin.status, 0, afterLogin.stdout + afterLogin.stderr));
+  const badLogin = project('login-bad', { backend: false });
+  const refused = login(badLogin, 'mds_notarealtoken123\n');
+  check('login: a wrong token is refused and nothing is saved', () => {
+    assert.notEqual(refused.status, 0);
+    assert.match(refused.stderr, /does not accept this token/);
+    assert.equal(existsSync(join(badLogin, '.env.local')), false);
+  });
+  const typo = login(badLogin, 'abc\n');
+  check('login: something that is not a token is explained', () => {
+    assert.notEqual(typo.status, 0);
+    assert.match(typo.stderr, /does not look like a portal token/);
+  });
+  const keepOthers = project('login-merge', { backend: false });
+  writeFileSync(join(keepOthers, '.env.local'), `OPENAI_API_KEY=mine\n# PORTAL_TOKEN=old\nOTHER=1\n`);
+  login(keepOthers, `${tokens.Alice}\n`);
+  check('login: replaces only the token line and keeps the other settings', () => {
+    const text = readFileSync(join(keepOthers, '.env.local'), 'utf8');
+    assert.equal(text, `OPENAI_API_KEY=mine\nPORTAL_TOKEN=${tokens.Alice}\nOTHER=1\n`);
+  });
+  const unsafe = project('login-unsafe', { backend: false });
+  spawnSync('git', ['init', '-q'], { cwd: unsafe });
+  const unsafeRun = login(unsafe, `${tokens.Alice}\n`);
+  check('login: refuses to write the token where git would publish it', () => {
+    assert.notEqual(unsafeRun.status, 0);
+    assert.match(unsafeRun.stderr, /not ignored by git/);
+    assert.equal(existsSync(join(unsafe, '.env.local')), false);
+  });
+  writeFileSync(join(unsafe, '.gitignore'), '.env.local\n');
+  check('login: works once .env.local is git-ignored', () => assert.equal(login(unsafe, `${tokens.Alice}\n`).status, 0));
   console.log('portal-deploy CLI: all passed');
 } finally {
   server.kill();
