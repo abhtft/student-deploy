@@ -625,7 +625,7 @@ sequenceDiagram
 
 The kit makes the student's AI editor build inside the architecture ([STUDENT_KIT.md](STUDENT_KIT.md) has the full text):
 
-<!-- diagram:3b9ec8ec -->
+<!-- diagram:dceca84d -->
 ![Diagram: 4.11 Student kit (F11)](diagrams/technical-specification/14-4-11-student-kit-f11.png)
 
 <details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
@@ -638,8 +638,10 @@ flowchart LR
   D --> E["npm run dev: offline AI mock"]
   E --> F["npm run check"]
   F --> G["git push"]
+  F --> J["npm run deploy, or ask the editor"]
   G --> H["Action: check, build, deploy"]
-  H --> I["Site, backend and class AI live"]
+  H --> I["Site, backend, class AI and storage live"]
+  J --> I
   F -. "problems" .-> D
   H -. "red run: paste the message to the AI" .-> D
 ```
