@@ -38,7 +38,7 @@ try {
   };
   const run = (cwd, token, ...args) =>
     spawnSync('node', [join(root, 'student', 'portal-deploy.mjs'), '--skip-build', ...args], {
-      cwd, encoding: 'utf8', env: { ...process.env, PORTAL_URL: URL, PORTAL_TOKEN: token ?? '', PORTAL_READY_TIMEOUT_MS: '30000' },
+      cwd, encoding: 'utf8', env: { ...process.env, PORTAL_URL: URL, PORTAL_TOKEN: token ?? '', CLASS_PLATFORM_HOME: join(work, 'no-home'), PORTAL_READY_TIMEOUT_MS: '30000' },
     });
   const check = (name, fn) => { try { fn(); console.log(`  ok  ${name}`); } catch (e) { console.log(`  FAIL ${name}`); throw e; } };
 

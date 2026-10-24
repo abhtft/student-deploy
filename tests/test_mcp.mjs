@@ -25,7 +25,7 @@ const work = mkdtempSync(join(tmpdir(), 'kit-mcp-'));
 function client(root, env = {}) {
   const child = spawn(process.execPath, [join(root, 'tools', 'mcp.mjs'), '--root', root], {
     cwd: tmpdir(), // like an editor: the working directory is NOT the project, --root says where it is
-    env: { ...process.env, PORTAL_URL: URL, PLATFORM_PORTAL: URL, PORTAL_TOKEN: '', PORTAL_READY_TIMEOUT_MS: '60000', ...env },
+    env: { ...process.env, PORTAL_URL: URL, PLATFORM_PORTAL: URL, CLASS_PLATFORM_HOME: join(work, 'no-home'), PORTAL_TOKEN: '', PORTAL_READY_TIMEOUT_MS: '60000', ...env },
   });
   const lines = [];
   const waiting = new Map();
@@ -86,7 +86,7 @@ try {
   assert.equal(init.result.serverInfo.name, 'class-platform');
   mcp.notify('notifications/initialized');
   const tools = (await mcp.call('tools/list')).result.tools;
-  assert.deepEqual(tools.map((t) => t.name), ['check_project', 'deploy', 'status', 'update_kit']);
+  assert.deepEqual(tools.map((t) => t.name), ['init_project', 'check_project', 'deploy', 'status', 'update_kit']);
   assert.deepEqual(tools.find((t) => t.name === 'update_kit').inputSchema.required, ['confirm']);
   assert.deepEqual(tools.find((t) => t.name === 'deploy').inputSchema.required, ['confirm']);
   assert.equal((await mcp.call('nope')).error.code, -32601);

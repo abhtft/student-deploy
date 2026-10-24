@@ -141,7 +141,16 @@ for (const [n, want] of [[0, '$0.00'], [0.25, '$0.25'], [0.5, '$0.50'], [0.1, '$
 }
 
 // the "Start here" card: only well-formed GitHub repository addresses produce links, and links never carry anything but owner/repo
-const { parseRepo, repoLinks, KIT_FILES } = await import('../web/github.js');
+const { parseRepo, repoLinks, KIT_FILES, setupCommand, mcpEntry, vscodeInstallLink, antigravityConfig } = await import('../web/github.js');
+// connecting an editor without a download: the command, the editor entry and the VS Code install link
+assert.equal(setupCommand('https://deploy.example.com/'), 'npx -y https://deploy.example.com/class-platform-mcp.tgz setup');
+assert.deepEqual(mcpEntry('1.2.3', 'https://deploy.example.com/'), { command: 'npx', args: ['-y', 'https://deploy.example.com/class-platform-mcp-1.2.3.tgz'] });
+assert.deepEqual(mcpEntry('1.2.3', 'https://deploy.example.com', true), { command: 'cmd', args: ['/c', 'npx', '-y', 'https://deploy.example.com/class-platform-mcp-1.2.3.tgz'] });
+const link = vscodeInstallLink(mcpEntry('1.2.3', 'https://deploy.example.com'));
+assert.ok(link.startsWith('vscode:mcp/install?'));
+assert.deepEqual(JSON.parse(decodeURIComponent(link.slice('vscode:mcp/install?'.length))), { name: 'class-platform', command: 'npx', args: ['-y', 'https://deploy.example.com/class-platform-mcp-1.2.3.tgz'] });
+assert.deepEqual(JSON.parse(antigravityConfig(mcpEntry('1.2.3', 'https://x.example'))).mcpServers['class-platform'].command, 'npx');
+assert.ok(!/mds_/.test(link + antigravityConfig(mcpEntry('1', 'https://x.example'))), 'no token in any link or config text');
 assert.deepEqual(parseRepo('https://github.com/alice/my-site'), { owner: 'alice', repo: 'my-site', base: 'https://github.com/alice/my-site' });
 assert.equal(parseRepo('github.com/alice/my-site.git/').base, 'https://github.com/alice/my-site');
 assert.equal(parseRepo('  https://www.github.com/Alice-1/repo_name.v2  ').repo, 'repo_name.v2');

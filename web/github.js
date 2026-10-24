@@ -1,7 +1,7 @@
 // The student's "Start here" card: download the kit, connect the GitHub repository (deep links, no tokens), and a checklist that ticks
 // as things happen. Below it, the older downloads for a student who already has a project. Nothing here touches the API, and no
 // token is ever put in a link or a downloaded file. The files are published next to the pages (see admin.mjs and portal-downloads.json).
-import { fill, h } from './common.js';
+import { copyText, fill, h } from './common.js';
 
 export const DOWNLOAD_FILES = {
   cli: 'portal-deploy.mjs',
@@ -9,6 +9,22 @@ export const DOWNLOAD_FILES = {
   workflow: { frontend: 'deploy-frontend-folder.yml', root: 'deploy-root-app.yml' },
 };
 export const KIT_FILES = { zip: 'starter-kit.zip', version: 'kit-version.json' };
+
+// ---- connecting an AI editor without downloading anything: the MCP package, started by the editor with npx ----
+/** The one command a student runs once per computer. `origin` is the portal's address. */
+export const setupCommand = (origin) => `npx -y ${String(origin).replace(/\/$/, '')}/class-platform-mcp.tgz setup`;
+
+/** What an editor runs to start the server. Windows editors need `cmd /c npx` because they cannot start npx directly. */
+export function mcpEntry(version, origin, windows = false) {
+  const npx = ['-y', `${String(origin).replace(/\/$/, '')}/class-platform-mcp-${version}.tgz`];
+  return windows ? { command: 'cmd', args: ['/c', 'npx', ...npx] } : { command: 'npx', args: npx };
+}
+
+/** A link that opens VS Code and offers to add the server (VS Code's "mcp/install" link format). */
+export const vscodeInstallLink = (entry) => `vscode:mcp/install?${encodeURIComponent(JSON.stringify({ name: 'class-platform', ...entry }))}`;
+
+/** The complete text for Antigravity's raw MCP config when the student has no other servers. */
+export const antigravityConfig = (entry) => JSON.stringify({ mcpServers: { 'class-platform': entry } }, null, 2);
 /** Set to the public template repository (https://github.com/<owner>/<repo>) once it exists: a "Use this template" link then appears. */
 export const TEMPLATE_URL = '';
 
@@ -79,8 +95,36 @@ export function renderGithub(box, token) {
     h('input', { type: 'radio', name: 'gh-layout', value, checked, style: 'width:auto', onchange: () => workflow.setAttribute('href', DOWNLOAD_FILES.workflow[value]) }), text);
   const workflow = h('a', { class: 'btn', href: DOWNLOAD_FILES.workflow.frontend, download: 'deploy.yml' }, 'Download deploy.yml');
 
+  // the editor connection (no download): needs the newest package version, which the portal publishes in mcp-version.json
+  const windows = typeof navigator !== 'undefined' && /Windows/i.test(navigator.userAgent || '');
+  const origin = typeof location !== 'undefined' ? location.origin : '';
+  const command = setupCommand(origin);
+  const vscodeLink = h('a', { class: 'btn', href: '#', 'aria-disabled': 'true' }, 'Add to VS Code');
+  let agConfig = '';
+  const copyAg = h('button', { class: 'small', disabled: true, onclick: () => copyText(agConfig) }, 'Copy Antigravity config');
+  fetch('mcp-version.json').then((r) => (r.ok ? r.json() : null)).then((v) => {
+    if (!v?.version) return;
+    const entry = mcpEntry(v.version, origin, windows);
+    vscodeLink.setAttribute('href', vscodeInstallLink(entry));
+    vscodeLink.removeAttribute('aria-disabled');
+    agConfig = antigravityConfig(entry);
+    copyAg.disabled = false;
+  }).catch(() => {});
+  const connect = h('div', { class: 'stack', style: 'gap:8px' },
+    h('strong', {}, 'Fastest: connect your AI editor (nothing to download)'),
+    h('p', { class: 'small muted', style: 'margin:0' }, 'Run this once on your computer (it needs Node). It asks for your token, saves it for every project, and adds the class tools to VS Code and Antigravity.'),
+    h('div', { class: 'secret', style: 'font-size:13px' }, command),
+    h('div', { class: 'actions', style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' },
+      h('button', { class: 'primary small', onclick: () => copyText(command) }, 'Copy the command'), vscodeLink, copyAg),
+    h('ol', { class: 'small', style: 'margin:0;padding-left:20px;display:grid;gap:4px' },
+      h('li', {}, 'Run the command in a terminal and paste your token when asked (you will see ', h('code', {}, 'mds_'), ' and stars).'),
+      h('li', {}, 'Restart your editor, or press Refresh in its MCP list. (Antigravity without the command: ', h('em', {}, 'Manage MCP servers, View raw config'), ', paste the copied config, save.)'),
+      h('li', {}, 'Open an ', h('strong', {}, 'empty folder'), ' and tell the AI: ', h('code', {}, 'set up my class project'), '. Then describe your app, and say ', h('code', {}, 'publish my site'), ' when you are happy.')));
+
   fill(box,
     h('h2', {}, 'Start here'),
+    connect,
+    h('strong', {}, 'Or download the starter kit'),
     h('p', { class: 'small muted', style: 'margin:0' }, 'Build your site and backend with your AI editor, push to GitHub, and it deploys by itself. You only need your token.'),
     h('div', { class: 'actions', style: 'display:flex;gap:8px;flex-wrap:wrap;align-items:center' },
       h('a', { class: 'btn primary', href: KIT_FILES.zip, download: 'class-platform-starter.zip' }, 'Download the starter kit'),

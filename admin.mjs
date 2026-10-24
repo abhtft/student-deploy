@@ -74,30 +74,31 @@ if (command === 'add') {
 } else if (command === 'portal-publish') {
   const root = dirname(fileURLToPath(import.meta.url));
   const web = join(root, 'web');
-  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.yml': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.zip': 'application/zip' };
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.yml': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.zip': 'application/zip', '.tgz': 'application/gzip' };
   // Pages from web/, plus the student downloads (portal-downloads.json maps published name -> source file, so each has one source of truth).
   const downloads = JSON.parse(readFileSync(join(root, 'portal-downloads.json'), 'utf8'));
   const uploads = [
     ...readdirSync(web).filter((f) => statSync(join(web, f)).isFile()).map((f) => [f, join(web, f)]),
     ...Object.entries(downloads).map(([name, source]) => [name, join(root, source)]),
   ];
-  // The student kit, built fresh from starter/ as one zip, plus its version file (the portal's Start here card and `platform update` use them).
-  const { buildKitZip } = await import('./starter/build-kit.mjs');
+  // The student kit (zip + version file) and the MCP package (one tarball per version, the newest alias, mcp-version.json), all built fresh from
+  // starter/ by the same code the local dev portal uses.
+  const { buildPublishFiles } = await import('./starter/publish-files.mjs');
   const kitTemp = mkdtempSync(join(tmpdir(), 'kit-publish-'));
-  const kit = buildKitZip(join(kitTemp, 'starter-kit.zip'));
-  writeFileSync(join(kitTemp, 'kit-version.json'), `${JSON.stringify({ kit: 'class-platform-starter', kitVersion: kit.version, minKit: kit.minKit, scripts: kit.scripts, zipSha256: kit.sha256, files: kit.files }, null, 2)}
-`);
-  uploads.push(['starter-kit.zip', join(kitTemp, 'starter-kit.zip')], ['kit-version.json', join(kitTemp, 'kit-version.json')]);
+  const built = buildPublishFiles(kitTemp, outputs.PortalUrl);
+  for (const name of built.files) uploads.push([name, join(kitTemp, name)]);
+  const kit = { version: built.kitVersion };
   const files = uploads.map(([name]) => name);
   for (const [file, path] of uploads) {
     // Explicit content types: the AWS CLI guesses from the Windows registry, which can label .js as text/plain.
     aws('s3', 'cp', path, `s3://${outputs.BucketName}/portal/${file}`, '--content-type', TYPES[extname(file)] ?? 'application/octet-stream', '--cache-control', 'no-cache');
   }
   const listed = JSON.parse(aws('s3api', 'list-objects-v2', '--bucket', outputs.BucketName, '--prefix', 'portal/', '--query', 'Contents[].Key') || 'null') ?? [];
-  for (const key of listed.filter((k) => !files.includes(k.slice('portal/'.length)))) aws('s3', 'rm', `s3://${outputs.BucketName}/${key}`);
+  // every older class-platform-mcp-<version>.tgz stays: editors' settings point at the exact version they were set up with
+  for (const key of listed.filter((k) => !files.includes(k.slice('portal/'.length)) && !/^portal\/class-platform-mcp-[\w.-]+\.tgz$/.test(k))) aws('s3', 'rm', `s3://${outputs.BucketName}/${key}`);
   aws('cloudfront', 'create-invalidation', '--distribution-id', outputs.PortalDistributionId, '--paths', '/*');
   rmSync(kitTemp, { recursive: true, force: true });
-  console.log(`Published ${files.length} files (including the student kit ${kit.version}). Portal: ${outputs.PortalUrl}`);
+  console.log(`Published ${files.length} files (including the student kit ${kit.version} and class-platform-mcp ${built.mcpVersion}). Portal: ${outputs.PortalUrl}`);
 } else if (command === 'teacher-setup') {
   const username = names[0];
   if (!username || !/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {

@@ -8,6 +8,7 @@ State lives in memory only; restart to reset.
 import json
 import mimetypes
 import os
+import re
 import sys
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -36,21 +37,14 @@ _kit = {}
 
 
 def kit_file(name):
-    """starter-kit.zip and kit-version.json, built once with the same code portal-publish uses."""
+    """starter-kit.zip, kit-version.json and the MCP package files, built once with the same code portal-publish uses."""
     if not _kit:
         import subprocess
         import tempfile
         folder = tempfile.mkdtemp(prefix="dev-kit-")
-        zip_path = os.path.join(folder, "starter-kit.zip")
-        subprocess.run(["node", os.path.join(here, "..", "starter", "build-kit.mjs"), "--zip", zip_path], check=True, capture_output=True)
-        data = open(zip_path, "rb").read()
-        import hashlib
-        platform_json = json.load(open(os.path.join(here, "..", "starter", "template", "platform.json"), encoding="utf8"))
-        _kit["starter-kit.zip"] = data
-        package_scripts = json.load(open(os.path.join(here, "..", "starter", "template", "package.json"), encoding="utf8")).get("scripts", {})
-        scripts = {n: package_scripts[n] for n in platform_json.get("managedScripts", []) if n in package_scripts}
-        _kit["kit-version.json"] = json.dumps({"kit": "class-platform-starter", "kitVersion": platform_json["kitVersion"], "minKit": platform_json.get("minKit", "0"), "scripts": scripts,
-                                               "zipSha256": hashlib.sha256(data).hexdigest()}).encode()
+        subprocess.run(["node", os.path.join(here, "..", "starter", "publish-files.mjs"), folder, f"http://127.0.0.1:{port}"], check=True, capture_output=True)
+        for entry in os.listdir(folder):
+            _kit[entry] = open(os.path.join(folder, entry), "rb").read()
     return _kit[name]
 
 
@@ -256,8 +250,8 @@ class Handler(BaseHTTPRequestHandler):
             return self.api("GET")
         name = self.path.split("?")[0].lstrip("/") or "index.html"
         path = os.path.normpath(os.path.join(WEB, name))
-        if name in ("starter-kit.zip", "kit-version.json"):  # the student kit, built on first request exactly like portal-publish does
-            return self.send(200, kit_file(name), "application/zip" if name.endswith(".zip") else "application/json")
+        if name in ("starter-kit.zip", "kit-version.json", "mcp-version.json") or re.fullmatch(r"class-platform-mcp(-[\w.]+)?\.tgz", name):  # built on first request exactly like portal-publish does
+            return self.send(200, kit_file(name), "application/zip" if name.endswith(".zip") else "application/gzip" if name.endswith(".tgz") else "application/json")
         if name in DOWNLOADS:  # the student downloads, published next to the pages (see portal-downloads.json)
             path = os.path.normpath(os.path.join(here, "..", DOWNLOADS[name]))
             return self.send(200, open(path, "rb").read(), "text/plain; charset=utf-8")

@@ -6,6 +6,7 @@
 //   node portal-deploy.mjs --skip-build    deploy the frontend's existing build folder
 //   node portal-deploy.mjs --frontend web --backend api    use other folder names
 //   node portal-deploy.mjs status          is the saved token valid, and for how long (deploys nothing)
+//   node portal-deploy.mjs login --global save your token once for this whole computer (~/.class-platform/token), used by every project
 //   node portal-deploy.mjs login           save your token once (asks for it, checks it, writes .env.local); `npm run login`
 //
 // Expected layout:   frontend/  your app (built with `npm run build` into dist/, build/ or out/)
@@ -14,7 +15,8 @@
 //
 // Your token is read from PORTAL_TOKEN (environment, .env.local or .env). Never commit it.
 // No npm install needed - only Node 20+. In GitHub Actions store the token as the secret PORTAL_TOKEN.
-import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -46,7 +48,17 @@ function readToken() {
     const match = readFileSync(file, 'utf8').match(/^\s*PORTAL_TOKEN\s*=\s*["']?([^"'\s]+)/m);
     if (match) return match[1];
   }
+  // last: the token saved once for the whole computer (`login --global`, or `class-platform-mcp setup`). Never inside a project, so it cannot be committed.
+  try {
+    const saved = readFileSync(join(homeFolder(), 'token'), 'utf8').trim();
+    if (saved) return saved;
+  } catch { /* none saved */ }
   return null;
+}
+
+/** Where the computer-wide token lives. CLASS_PLATFORM_HOME overrides it (tests, or a shared computer). */
+function homeFolder() {
+  return process.env.CLASS_PLATFORM_HOME || join(homedir(), '.class-platform');
 }
 
 /** Applies one chunk of typed or pasted keys to the line being typed. Enter ends it, Backspace deletes, Ctrl+C cancels, other control keys are ignored. */
@@ -110,6 +122,14 @@ async function login(given) {
   if (!given) console.log('Paste your portal token (the one your teacher gave you) and press Enter. You will see mds_ and one * per character: the rest is hidden on purpose.');
   const token = (given ?? await ask('Token: ', { hidden: true })).replace(/^["']|["']$/g, '');
   if (!/^[\w.~-]{8,}$/.test(token)) fail('That does not look like a portal token (it starts with mds_ and has no spaces). Copy it again from your teacher or the portal.');
+  const everywhere = flag('--global');
+  if (everywhere) {
+    const info = await signIn(token);
+    mkdirSync(homeFolder(), { recursive: true });
+    writeFileSync(join(homeFolder(), 'token'), `${token}\n`, { mode: 0o600 });
+    console.log(`✔ Saved. Signed in as ${info.name} (${info.slug}); the token is valid for ${info.daysLeft} more day${info.daysLeft === 1 ? '' : 's'}. It is stored in ${join(homeFolder(), 'token')}, outside any project, so every project on this computer can use it.`);
+    return;
+  }
   // never write a secret to a file that git would pick up: .env.local must be ignored
   if (spawnSync('git', ['check-ignore', '-q', '.env.local']).status === 1) fail('.env.local is not ignored by git, so saving the token there could publish it. Add the lines  .env  and  .env.*  to .gitignore (npm run check explains), then run this again.');
   const info = await signIn(token);

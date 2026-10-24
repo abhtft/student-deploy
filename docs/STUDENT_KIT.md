@@ -91,6 +91,18 @@ Mentions in comments and placeholders like `mds_xxxxxxxx` do not trigger errors 
 
 `npm run dev` starts the site (http://localhost:3000) and the backend (http://127.0.0.1:8788); the site forwards `/api` to it, so the browser sees one address exactly like on the platform. Both backends (Python and Node) reload changed files without a restart. **The class AI is an offline mock locally** (answers start with `[mock AI]`), so students iterate without spending their allowance; setting their own `OPENAI_*` variables in `.env.local` uses a real model. `npm run doctor` checks Node 22, Python 3.12 and git.
 
+## 4a. Connecting an AI editor with no download (`class-platform-mcp`, kit 1.6.0)
+
+The kit is no longer needed to get started. One command, once per computer (Node is the only requirement):
+
+```bash
+npx -y https://deploy.margdarshakss.com/class-platform-mcp.tgz setup
+```
+
+It asks for the token (masked: `mds_` then one `*` per character), checks it with the portal, saves it in `~/.class-platform/token` (the home folder, so every project can use it and none can commit it), finds VS Code and Antigravity, shows exactly what it will add to each editor's MCP settings, asks, makes a backup and merges a single `class-platform` entry (other servers are never touched; a settings file with comments is left alone and the entry is printed instead). Then: restart the editor (or refresh its MCP list), open an **empty folder** and tell the AI *set up my class project*. The `init_project` tool, after a yes, writes the starter (site, backend, rules, helpers) into the folder and installs the site's packages; from there it is the same journey: describe the app, `check_project`, *publish my site*.
+
+The portal's Start here card has the command with a copy button, an **Add to VS Code** install link and a **Copy Antigravity config** button. The editor entry points at a **pinned** package version (`class-platform-mcp-<version>.tgz`), so nothing changes under a student without notice; `status` says when a newer package exists and `setup` is run again to move to it (old versions stay available). The package carries its own copies of the check and `portal-deploy.mjs`, used when a folder has no kit files; a kit project keeps using its own. The server finds the open folder through the editor (MCP *roots*), and every tool accepts an explicit `path`. Details and the tests: section 4.15 of the specification and `tests/test_mcp_package.mjs`.
+
 ## 4b. The class storage helper (`class_storage`)
 
 For data that must survive a refresh or be shared between visitors, and for uploaded files. Python: `import class_storage as storage`, then `storage.put("scores", "alice", {...})`, `storage.get(...)`, `storage.items("scores")`, `storage.delete(...)`, and `storage.files.put/list/url/delete/upload_url`; Node: `import * as storage from './class_storage.mjs'` with `put`, `get`, `items`, `del` and `files.*`. The kit's sample backend has a `/notes` route that shows it. On the platform it works only after the teacher switches storage on (the portal's Backend card then shows the limits and usage); on the student's computer (`npm run dev`) it keeps everything in the git-ignored `.class-storage/` folder with the same rules, so building never needs a connection. Errors are `StorageError` with a kind (`not_enabled`, `allowance_used`, `quota_exceeded`, `too_large`, `token_inactive`, `bad_request`, `unavailable`, `bad_key`). It is **not SQL**: records are listed by id. Everything about the connector (caps, cost, isolation): [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md).

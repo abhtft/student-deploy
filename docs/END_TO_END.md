@@ -203,6 +203,10 @@ Apps need to remember things. The teacher can give a student's **backend** a sma
 3. In code: `import class_storage as storage`, then `storage.put("scores", "alice", {...})`, `storage.get(...)`, `storage.items("scores")`, `storage.delete(...)`, `storage.files.put(...)`. The kit's sample backend has a `/notes` route. It is not SQL: records are listed by id.
 4. A revoked, expired or offline token pauses storage; going over a cap or the allowance returns a clear error the student's code can show.
 
+### 3.3d Student: connecting an AI editor with one command (no kit download)
+
+`npx -y https://deploy.margdarshakss.com/class-platform-mcp.tgz setup` (needs Node). It saves the token for the whole computer, adds the class tools to VS Code and Antigravity (after showing what it will change and asking), and the student then opens an empty folder and says *set up my class project*. The Start here card on the student page has the command, an Add to VS Code link and a Copy Antigravity config button. Publishing the files that make this work is part of `node admin.mjs portal-publish` (the tarball per version, the always-newest alias and `mcp-version.json`); older tarballs are kept on purpose.
+
 ### 3.3c Student: deploying from the computer (no GitHub)
 
 GitHub is optional. With the kit (1.3 and later): `npm run login` once (paste the token; it shows `mds_` and one `*` per character, is checked against the portal and saved in the git-ignored `.env.local`), then `npm run check` and `npm run deploy` after each change. In VS Code or Antigravity the student can instead say "publish my site": the kit's MCP server (`tools/mcp.mjs`) runs the check, the assistant asks for a yes, then deploys. VS Code reads the kit's `.vscode/mcp.json`; for Antigravity `npm run mcp-config` prints the entry to paste. If the token is rejected or expired, `npm run login` again. The GitHub route and this route use the same token and the same `portal-deploy.mjs`.
@@ -398,6 +402,9 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 |---|---|---|
 | `npm run login` says the token is not accepted | mistyped, expired, or replaced by a regenerated token | paste the current token; ask the teacher if unsure |
 | `npm run login` says `.env.local` is not ignored by git | the project's `.gitignore` lacks `.env.*` | add `.env` and `.env.*` to `.gitignore` (`npm run check` explains) |
+| `setup` says a settings file was "left alone" | it has comments or is not valid JSON, so saving it would lose or break something | add the printed `class-platform` entry by hand (inside `servers` for VS Code, `mcpServers` for Antigravity) |
+| The editor cannot start the tool (`npx` not found) | Node is not installed or not on the PATH, or the editor cannot launch `npx` directly (Windows) | install Node 20 or later; `setup` already writes `cmd /c npx` on Windows; restart the editor |
+| `init_project` says the folder is not empty | the folder already has files | open an empty folder for a new project |
 | Antigravity says "No MCP servers installed" after pasting | the pasted text was not pure JSON (the instructions that `npm run mcp-config` prints were included), or the `class-platform` entry is not inside `"mcpServers"` | replace the whole file with the JSON between the two marker lines that `npm run mcp-config` prints (or run `npm run mcp-config -- --json`), save, press Refresh. The Problems counter in the editor shows a JSON error while the file is wrong |
 | The editor's tool server does not start | the editor does not support MCP, or the path is wrong | VS Code: start it from the Chat view in Agent mode; Antigravity: run `npm run mcp-config` and paste the entry; otherwise use `npm run deploy` |
 | Storage calls answer `not_enabled` | the teacher has not switched storage on for this student | ask the teacher; the data of an earlier session is kept |

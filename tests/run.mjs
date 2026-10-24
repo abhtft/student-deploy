@@ -123,6 +123,11 @@ await step('class storage helpers (Python and Node) against the real storage API
   }
 });
 
+await step('class-platform-mcp package: npx from a URL, editor roots, init_project, bundled check and deploy, computer-wide token, setup for VS Code and Antigravity', () => {
+  const r = spawnSync('node', [join(here, 'test_mcp_package.mjs')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('student kit update notice: one quiet line once a day, never in CI, piped output or --json, silent offline; minimum kit version', () => {
   const r = spawnSync('node', [join(here, 'test_update_notice.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

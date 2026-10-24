@@ -148,6 +148,7 @@ samconfig = read("samconfig.toml")
 for name, expected in facts["deployedParameters"].items():
     found = re.search(rf'{name}=\\"([^\\"]*)\\"', samconfig)
     check(f"deployedParameters.{name} (samconfig.toml)", expected, found.group(1) if found else None)
+check("mcpPackage.version", facts["mcpPackage"]["version"], json.loads(read("starter/mcp/package.json"))["version"])
 check("kitVersion", facts["kitVersion"], json.loads(read("starter/template/platform.json"))["kitVersion"])
 check("testSteps", facts["testSteps"], len(re.findall(r"^\s*await step\(", read("tests/run.mjs"), re.M)))
 
