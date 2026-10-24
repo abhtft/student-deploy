@@ -1,6 +1,6 @@
 {
   "kit": "class-platform-starter",
-  "kitVersion": "1.5.0",
+  "kitVersion": "1.5.1",
   "minKit": "1.0.0",
   "portal": "https://deploy.margdarshakss.com",
   "frontend": "frontend",

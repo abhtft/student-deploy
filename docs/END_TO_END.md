@@ -398,6 +398,7 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 |---|---|---|
 | `npm run login` says the token is not accepted | mistyped, expired, or replaced by a regenerated token | paste the current token; ask the teacher if unsure |
 | `npm run login` says `.env.local` is not ignored by git | the project's `.gitignore` lacks `.env.*` | add `.env` and `.env.*` to `.gitignore` (`npm run check` explains) |
+| Antigravity says "No MCP servers installed" after pasting | the pasted text was not pure JSON (the instructions that `npm run mcp-config` prints were included), or the `class-platform` entry is not inside `"mcpServers"` | replace the whole file with the JSON between the two marker lines that `npm run mcp-config` prints (or run `npm run mcp-config -- --json`), save, press Refresh. The Problems counter in the editor shows a JSON error while the file is wrong |
 | The editor's tool server does not start | the editor does not support MCP, or the path is wrong | VS Code: start it from the Chat view in Agent mode; Antigravity: run `npm run mcp-config` and paste the entry; otherwise use `npm run deploy` |
 | Storage calls answer `not_enabled` | the teacher has not switched storage on for this student | ask the teacher; the data of an earlier session is kept |
 | Storage answers `allowance_used` or `quota_exceeded` | the operations allowance or a size cap is full | wait for the reset, delete data, or the teacher raises the caps |

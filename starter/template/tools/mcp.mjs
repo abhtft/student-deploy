@@ -25,13 +25,25 @@ const kitVersion = (() => { try { return JSON.parse(readFileSync(join(root, 'pla
 
 if (args.includes('--print-config')) {
   const script = join(here, 'mcp.mjs');
-  console.log(`VS Code: nothing to do. This folder already has .vscode/mcp.json; open the Chat view in Agent mode and start the "class-platform" server (VS Code offers a Start button above the file).
+  const entry = { command: 'node', args: [script, '--root', root] };
+  const whole = JSON.stringify({ mcpServers: { 'class-platform': entry } }, null, 2);
+  if (args.includes('--json')) {
+    console.log(whole); // nothing but the file content, for `npm run mcp-config -- --json > mcp_config.json`
+  } else {
+    console.log(`VS Code: nothing to do. This folder already has .vscode/mcp.json; open the Chat view in Agent mode and start the "class-platform" server.
+         (Newer versions offer a one-click "Migrate" to .mcp.json: accept it.)
 
-Antigravity: open the agent panel's "..." menu > MCP Servers > Manage MCP Servers > View raw config, and add this inside "mcpServers" (keep your other servers):
+Antigravity: open the agent panel's "..." menu > MCP Servers > Manage MCP Servers > View raw config.
+  - If the file is empty or has no other servers: replace ALL of it with the JSON between the two lines below.
+  - If it already lists other servers: add only the "class-platform": { ... } part inside your existing "mcpServers".
+  Copy ONLY the JSON, not these instructions. Then save and press Refresh in the MCP list.
 
-${JSON.stringify({ 'class-platform': { command: 'node', args: [script, '--root', root] } }, null, 2)}
+----- copy from the next line -----
+${whole}
+----- up to the previous line -----
 
-Then refresh the MCP list. Run  npm run login  once in a terminal first (the server reads your token from .env.local).`);
+Run  npm run login  once in a terminal first (the server reads your token from .env.local).`);
+  }
 } else {
   serve();
 }

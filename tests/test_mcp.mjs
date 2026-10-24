@@ -71,10 +71,13 @@ try {
 
   const printed = spawnSync(process.execPath, [join(kit, 'tools', 'mcp.mjs'), '--root', kit, '--print-config'], { encoding: 'utf8' });
   assert.equal(printed.status, 0);
-  const snippet = JSON.parse(printed.stdout.slice(printed.stdout.indexOf('{\n  "class-platform"'), printed.stdout.indexOf('\n}\n') + 2));
+  const between = printed.stdout.split('----- copy from the next line -----\n')[1].split('\n----- up to the previous line -----')[0];
+  const snippet = JSON.parse(between).mcpServers; // the part to paste is a complete, valid file with the mcpServers wrapper
   assert.equal(snippet['class-platform'].command, 'node');
   assert.equal(snippet['class-platform'].args[0], join(kit, 'tools', 'mcp.mjs'));
-  say('--print-config gives the Antigravity entry with this folder\'s absolute paths');
+  const only = spawnSync(process.execPath, [join(kit, 'tools', 'mcp.mjs'), '--root', kit, '--print-config', '--json'], { encoding: 'utf8' });
+  assert.deepEqual(JSON.parse(only.stdout).mcpServers, snippet, '--json prints nothing but the file content');
+  say('--print-config gives a complete Antigravity file (mcpServers wrapper, absolute paths) between clear markers, and --json prints only the JSON');
 
   const mcp = client(kit);
   const init = await mcp.call('initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'test', version: '1' } });
