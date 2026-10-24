@@ -190,6 +190,21 @@ Many students have no AI key. The teacher can give a student's **backend** an AI
 
 Good to know (measured live): OpenRouter counts usage a few seconds to about half a minute late, so a cap can be overshot slightly; the usage meter on the student page lags the same way (it refreshes every 60 s, the server caches 20 s); a capped-out key answers **HTTP 403 "Key limit exceeded"**; a disabled key answers 401. The free `:free` models are shared with everyone on OpenRouter and returned 429 in every test, so the paid model is the default. A key can call **any** OpenRouter model, so the dollar cap, not a model list, is the control.
 
+### 3.3b Class storage connector (optional, teacher-controlled)
+
+> Architecture, limits, cost and security: **[STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md)** (and section 4.14 of the specification).
+
+Apps need to remember things. The teacher can give a student's **backend** a small private database and file area, with hard caps, so nothing has to be set up and nothing can grow without limit. It is off for everyone until the owner deploys it (`StorageEnabled`) and the teacher switches it on per student.
+
+1. Teacher page: **Storage: on** for a student who has the Backend on (their function gets `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY`). **Storage caps...** edits the database size (default 5 MB), file space (50 MB) and the operations allowance (10,000 per day). The row shows usage. **Storage: off** stops access at once; the data is kept.
+2. The student's Backend card gets a **Class storage** section: three meters (database, files, operations), a code example in their language and the rules.
+3. In code: `import class_storage as storage`, then `storage.put("scores", "alice", {...})`, `storage.get(...)`, `storage.items("scores")`, `storage.delete(...)`, `storage.files.put(...)`. The kit's sample backend has a `/notes` route. It is not SQL: records are listed by id.
+4. A revoked, expired or offline token pauses storage; going over a cap or the allowance returns a clear error the student's code can show.
+
+### 3.3c Student: deploying from the computer (no GitHub)
+
+GitHub is optional. With the kit (1.3 and later): `npm run login` once (paste the token; it shows `mds_` and one `*` per character, is checked against the portal and saved in the git-ignored `.env.local`), then `npm run check` and `npm run deploy` after each change. In VS Code or Antigravity the student can instead say "publish my site": the kit's MCP server (`tools/mcp.mjs`) runs the check, the assistant asks for a yes, then deploys. VS Code reads the kit's `.vscode/mcp.json`; for Antigravity `npm run mcp-config` prints the entry to paste. If the token is rejected or expired, `npm run login` again. The GitHub route and this route use the same token and the same `portal-deploy.mjs`.
+
 ### 3.4 Student: adding a custom domain (**Custom domain** card)
 
 Requires **Domain: on** from the teacher.
@@ -308,6 +323,13 @@ The bucket name is the physical id of `SitesBucket` in the stack. Pages already 
 3. Set `AiEnabled="true"` in `samconfig.toml` (the secret name, default model and default cap have parameters too), run the safe deploy routine, then `node admin.mjs portal-publish`.
 4. Teacher page: **AI: on** for a student with the Backend on. Verify with `python tests/live_smoke.py` (section H creates one temporary $0.01 key and deletes it).
 
+### 4.5d Class storage setup (once)
+
+1. Run the safe deploy routine with the extra parameter `StorageEnabled="true"` (add it to `parameter_overrides` in `samconfig.toml` when you are happy). Read the change set first: it should create `StudentDataTable`, `StorageApi`, `StorageFunction` and, with alerts, `StorageErrorsAlarm`, add a CORS rule on the bucket, and change `DeployFunction` only by adding `STORAGE_URL`. Nothing existing should be replaced.
+2. `node admin.mjs portal-publish` (the kit then contains the helpers; the pages already tolerate a server without storage).
+3. Teacher page: **Storage: on** for one test student, deploy the kit's sample backend as that student and call its `/notes` route. Check an upload and a download link once, because presigned file transfer is the one part the local tests cannot exercise.
+4. Do not set `StorageEnabled` back to `false` while students hold data: the table is retained but nothing serves it.
+
 Rotate: create a new management key, update the secret (the functions re-read it within 5 minutes), delete the old key at OpenRouter. The keys the platform makes are named `student:<slug>`.
 
 ### 4.6 Limits at a glance
@@ -370,6 +392,11 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
+| `npm run login` says the token is not accepted | mistyped, expired, or replaced by a regenerated token | paste the current token; ask the teacher if unsure |
+| `npm run login` says `.env.local` is not ignored by git | the project's `.gitignore` lacks `.env.*` | add `.env` and `.env.*` to `.gitignore` (`npm run check` explains) |
+| The editor's tool server does not start | the editor does not support MCP, or the path is wrong | VS Code: start it from the Chat view in Agent mode; Antigravity: run `npm run mcp-config` and paste the entry; otherwise use `npm run deploy` |
+| Storage calls answer `not_enabled` | the teacher has not switched storage on for this student | ask the teacher; the data of an earlier session is kept |
+| Storage answers `allowance_used` or `quota_exceeded` | the operations allowance or a size cap is full | wait for the reset, delete data, or the teacher raises the caps |
 | "Teacher account is not set up yet" | the SSM entry is still `{}` | `node admin.mjs teacher-setup <name>` |
 | "Too many failed attempts" | 5 wrong passwords from one address | wait 15 minutes, or delete the `fail#<ip>` item |
 | Upload fails with a network error and a CORS note in the console | page opened on an address other than `https://deploy.margdarshakss.com` | use the real portal address |
@@ -401,6 +428,8 @@ A response from the platform's gateway is always JSON `{"error": "<code>"}`. An 
 ## 8. Costs
 
 The AI connector spends the OpenRouter credit: with Haiku 5.5 a typical answer (about 1,000 tokens in, 500 out) costs about $0.00035, so the default $0.25 cap per student is roughly 700 answers. Prices change: check OpenRouter. The per-student cap and the account credit balance bound the spend.
+
+Class storage adds only on-demand DynamoDB, S3 and a small Lambda. With the default caps a student stores at most 5 MB of records and 50 MB of files, and 10,000 operations a day, so it stays within cents per active student per month; an idle class costs close to nothing. It is bounded by the caps and the allowance, not by a budget. See [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md) section 7.
 
 Pay-per-use services (CloudFront, Lambda, API Gateway, DynamoDB on demand, S3): a class costs a few cents to a few dollars a month. The run allowance bounds backend compute per student (the default 5,000 runs of at most 10 s at 256 MB is roughly $0.17 per student per month at the very worst, approximate). Custom-domain tenant pricing is **not verified**: a community report says the first 10 tenants are free; check the billing console. Cost alerts come from the account's own AWS Budget (not managed here); error alarms are in section 4.5a. Versioned buckets keep old versions for 30 days, which adds a small storage cost.
 

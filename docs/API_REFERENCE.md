@@ -77,6 +77,19 @@ Class AI connector (needs `AiEnabled`; see END_TO_END.md section 3.3a). Body, an
 
 An empty body refreshes the usage numbers. → `200 { "token": <view> }`. `400` invalid value; `409` the student's function is updating (repeat the same request); `502` OpenRouter refused; `503` the connector is not set up.
 
+### `POST /api/admin/tokens/{id}/storage`
+Class storage connector (needs `StorageEnabled`; see [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md)). Body, any of:
+
+| Field | Type | Notes |
+|---|---|---|
+| `enabled` | boolean | ON makes the student's storage key once (kept afterwards) and sets `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY` on the function; OFF removes them and stops all storage access at once (the data is kept) |
+| `data_mb` | integer 1 to 100 | database size cap; default 5 |
+| `files_mb` | integer 1 to 500 | file space cap; default 50 |
+| `ops_limit` | integer 0 to 1,000,000 | operations allowed per `ops_period`; default 10,000 |
+| `ops_period` | `"day"`, `"month"` or `"total"` | when the allowance resets; default `"day"` |
+
+→ `200 { "token": <view> }`. `400` invalid value; `409` the student's function is updating (repeat the same request); `503` the connector is not set up. An empty body changes nothing.
+
 `{id}` is the token's `id` (a 64-character hex string) from the token view.
 
 ---
@@ -114,6 +127,10 @@ Flow: `upload-url`, then `PUT` the zip bytes to `uploadUrl` (no extra headers ne
 ### Class AI usage
 
 `GET /api/student/ai` returns `200 { "token": <view> }` with fresh usage (read from OpenRouter, cached 20 s). The student page asks once a minute.
+
+### Class storage usage
+
+`GET /api/student/storage` returns `200 { "token": <view>, "files": { "count": 3, "bytes": 123456 } | null }`. `files` is counted by listing the student's folder (so it is not part of every view) and is `null` when storage is off for the student.
 
 ### Backend
 
@@ -179,6 +196,16 @@ Returned by almost every route above (`token`, `item`, or inside lists).
 ```
 The key itself is never returned. `approx_calls` is shown only for the default model. While the connector is on, the three `env_names` are reserved: `PUT`/`DELETE` of them on the backend env routes answer `400`.
 
+`storage` (always present; `{ "available": false }` when the connector is not deployed):
+```json
+"storage": { "available": true, "enabled": true,
+             "limits": { "data_mb": 5, "files_mb": 50, "ops_limit": 10000, "ops_period": "day",
+                         "max_value_kb": 64, "max_items": 5000, "max_file_mb": 5, "max_files": 100 },
+             "env_names": ["CLASS_STORAGE_URL", "CLASS_STORAGE_KEY"],
+             "usage": { "data_bytes": 1234, "items": 12, "ops_used": 87, "resets_at": 1792684800 } }
+```
+The storage key is never returned. While the connector is on, the two `env_names` are reserved like the AI names.
+
 `status` meaning: `active` until `expires_at`; `expired` (read-only) until `offline_at`; then `offline`. An archived site counts as `offline`. When the backend feature is not deployed, `backend` is just `{ "available": false }`.
 
 ---
@@ -230,3 +257,35 @@ Anything else (status codes, bodies, headers) comes from the student's own funct
 
 ### Settings cache
 The gateway re-reads a student's settings at most every 10 seconds, and a site **without** a ready backend for at most 2 seconds, so a freshly deployed backend is served within about 2 seconds and a toggle change takes effect within about 10 seconds.
+
+---
+
+## 6. Storage API (called by student functions, not by browsers)
+
+Base address: `CLASS_STORAGE_URL` (an API Gateway address of its own). Every request carries `Authorization: Bearer <CLASS_STORAGE_KEY>` (`cs_<slug>.<secret>`). The student helpers `class_storage.py` and `class_storage.mjs` make these calls; the rules and limits are in [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md) and section 4.14 of the specification. Every call, successful or not, counts as one operation.
+
+| Route | Body or query | Answer |
+|---|---|---|
+| `PUT /v1/data/{collection}/{id}` | `{"value": <any JSON, up to 64 KB>}` | `200 {"id", "bytes"}` |
+| `GET /v1/data/{collection}/{id}` | | `200 {"id", "value", "updated_at"}`; `404 not_found` |
+| `DELETE /v1/data/{collection}/{id}` | | `200 {"deleted": true\|false}` |
+| `GET /v1/data/{collection}` | `?limit=1..100&after=<id>` | `200 {"items": [{"id", "value", "updated_at"}], "next": "<id>"\|null}`, ordered by id, at most about 400 KB per answer |
+| `POST /v1/files/upload-url` | `{"name", "size", "content_type"?}` | `200 {"url", "fields", "max_bytes", "expires_in"}`: a presigned S3 POST (send every field, then the file as the **last** field, as `multipart/form-data`) |
+| `GET /v1/files` | | `200 {"files": [{"name", "size", "updated_at"}]}` |
+| `GET /v1/files/{name}` | | `200 {"url", "expires_in"}` (a 5-minute download link); `404 not_found` |
+| `DELETE /v1/files/{name}` | | `200 {"deleted": true}` |
+
+Names: collection `[a-z0-9_-]{1,40}`; id `[A-Za-z0-9._-]{1,128}`; file name `[A-Za-z0-9._-]{1,100}` (no folders).
+
+Errors are JSON `{"error": "<code>", "message": "..."}`:
+
+| HTTP | `error` | Meaning |
+|---|---|---|
+| 401 | `bad_key` | missing, malformed or wrong key |
+| 403 | `token_inactive` | the student's token is expired, revoked or offline |
+| 403 | `not_enabled` | the teacher has switched storage off for this student |
+| 429 | `allowance_used` | the operations allowance is used up until it resets |
+| 413 | `quota_exceeded` | the database size, the item count, the file space or the file count is full |
+| 413 | `too_large` | a value, a request body or a file is over its size limit |
+| 400 | `bad_request` | a name, id, size or content type is not allowed, or the body is not valid |
+| 404 | `not_found` | no such item or file, or an unknown route |

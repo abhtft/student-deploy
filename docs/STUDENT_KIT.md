@@ -8,7 +8,7 @@ Companion to [END_TO_END.md](END_TO_END.md), [AI_CONNECTOR.md](AI_CONNECTOR.md) 
 
 ## 1. The student's journey
 
-<!-- diagram:efd1efa7 -->
+<!-- diagram:93a2ef86 -->
 ![Diagram: 1. The student's journey](diagrams/student-kit/01-1-the-student-s-journey.png)
 
 <details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
@@ -20,17 +20,19 @@ flowchart LR
   C --> D[Tells the AI what to build]
   D --> E[npm run dev<br/>offline AI mock, nothing spent]
   E --> F[npm run check]
-  F --> G[git push]
-  G --> H[GitHub Action: check, build, deploy]
-  H --> I[Site, backend and class AI are live]
+  F --> G[npm run deploy<br/>or ask the editor: publish my site]
+  F --> H[git push]
+  H --> J[GitHub Action: check, build, deploy]
+  G --> I[Site, backend, class AI and storage are live]
+  J --> I
   F -. problems .-> D
-  H -. red run: paste the message to the AI .-> D
+  J -. red run: paste the message to the AI .-> D
 ```
 
 </details>
 <!-- /diagram -->
 
-In words: sign in, get the kit, open it in an AI editor, describe the app, try it locally, check, push. Two ways to publish, same result. **From the computer, no GitHub:** `npm run login` once (asks for the token (while pasting it shows `mds_` and one `*` per character, so the student can see it arrived), checks it with the portal, saves it in the git-ignored `.env.local`; it refuses to write if git would not ignore that file), then `npm run deploy` after each change. **From GitHub:** add the token as the repository secret `PORTAL_TOKEN` (the portal gives deep links); after that every push to `main` deploys. **Or ask the AI editor (MCP):** `tools/mcp.mjs` is a dependency-free MCP server with three tools, `check_project`, `deploy` (check first, refuses on errors, needs `confirm=true` which the assistant may only send after the student agrees) and `status`; it just runs the project's own `tools/check.mjs` and `portal-deploy.mjs`. VS Code reads the kit's `.vscode/mcp.json` (start the server from the Chat view in Agent mode); Antigravity takes the snippet that `npm run mcp-config` prints, with absolute paths, pasted under *Manage MCP Servers > View raw config*. The token is not in the editor settings: the server reads the `.env.local` that `npm run login` wrote. Not covered by automation: a real run inside each editor (the server is tested by a script that speaks the protocol). The AI-editor rules have a "Deploying" section: check, deploy, read the address back; if there is no token or it is not accepted, the student runs `npm run login` themselves (the assistant never runs it, reads `.env.local` or asks for the token).
+In words: sign in, get the kit, open it in an AI editor, describe the app, try it locally, check, then publish by command, by asking the editor, or by pushing to GitHub. Two ways to publish, same result. **From the computer, no GitHub:** `npm run login` once (asks for the token (while pasting it shows `mds_` and one `*` per character, so the student can see it arrived), checks it with the portal, saves it in the git-ignored `.env.local`; it refuses to write if git would not ignore that file), then `npm run deploy` after each change. **From GitHub:** add the token as the repository secret `PORTAL_TOKEN` (the portal gives deep links); after that every push to `main` deploys. **Or ask the AI editor (MCP):** `tools/mcp.mjs` is a dependency-free MCP server with three tools, `check_project`, `deploy` (check first, refuses on errors, needs `confirm=true` which the assistant may only send after the student agrees) and `status`; it just runs the project's own `tools/check.mjs` and `portal-deploy.mjs`. VS Code reads the kit's `.vscode/mcp.json` (start the server from the Chat view in Agent mode); Antigravity takes the snippet that `npm run mcp-config` prints, with absolute paths, pasted under *Manage MCP Servers > View raw config*. The token is not in the editor settings: the server reads the `.env.local` that `npm run login` wrote. Not covered by automation: a real run inside each editor (the server is tested by a script that speaks the protocol). The AI-editor rules have a "Deploying" section: check, deploy, read the address back; if there is no token or it is not accepted, the student runs `npm run login` themselves (the assistant never runs it, reads `.env.local` or asks for the token).
 
 ## 2. What is in the kit
 
@@ -123,6 +125,8 @@ Two lines in the student's backend: `from class_ai import ask` / `answer = ask("
 | Test | What it proves |
 |---|---|
 | `tests/test_class_ai.py`, `test_class_ai.mjs` | the helper in both languages: success, every error kind, retries, timeout, mock, `default=`, no key or prompt in any output |
+| `tests/test_mcp.mjs` | the MCP server driven like an editor: handshake, tool list, `deploy` refuses without `confirm=true`, a failing check blocks a deploy, a real backend deploy, the token never in any output, a rejected token explained |
+| `tests/test_portal_cli.mjs` (login part) | `npm run login`: a valid token is saved to `.env.local` and never printed, a wrong one saves nothing, other lines are kept, the git-ignore guard, the masked prompt keys |
 | `tests/test_class_storage.py`, `test_class_storage.mjs` | the storage helper in both languages against the real storage API: data, files (multipart, file last), every error kind, the local folder, no key in any error |
 | `tests/test_kit.mjs` | kit contents; all rule copies identical; single-source files identical; no secrets or personal data; limits equal the platform's; each checker rule fires on a deliberate mistake (about 30 fixtures) and stays quiet on comments and placeholders; both dev servers run with hot reload and the AI mock |
 | `tests/test_kit_update.mjs` | `platform status` and `update` against the dev portal: current projects, older kits (dry run writes nothing, `--apply` updates only managed files, student code untouched), edited files protected, deleted files restored; hostile portals (wrong hash, unsafe path, extra files) |

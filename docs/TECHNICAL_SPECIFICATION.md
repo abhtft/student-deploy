@@ -1,6 +1,6 @@
 # Class Hosting Platform: Technical Specification (Release 1.0, MVP)
 
-> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.mjs` on every test run.
+> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.py` on every test run.
 
 ## 0. Document control
 
@@ -13,6 +13,7 @@
 | Student kit | version `1.4.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
+| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** built (section 4.14), off by default and **not yet deployed to production**. Kit 1.4.0 and the updated portal pages are published; the server side of storage is not. Local suite is now 33 steps. Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
 
 ### How to read this document
@@ -71,6 +72,7 @@ SQL or server databases for students (RDS), server-side rendering, long-running 
 | F11 | Student kit, checker, local dev tools, update command, AI helper | live | `test_kit*.mjs`, `test_class_ai.*`, live smoke section I, AI evaluation |
 | F12 | Operations: alarms, versioning, backups | live | `test_template_ops.py`, live alarm test |
 | F13 | Portal user interface (teacher and student pages) | live | `test_web.mjs`, browser checks |
+| F15 | Student deploy from the computer without GitHub: `npm run login`, `npm run deploy`, and an MCP server for AI editors | **live** in kit 1.3.1 and later; the MCP server is tested by a protocol script, **not yet run inside VS Code or Antigravity by the owner** | `test_portal_cli.mjs`, `test_mcp.mjs`, `test_kit.mjs` |
 | F14 | Class storage connector (capped per-student data and files) | **built, not yet deployed** (needs `StorageEnabled=true`) | `test_storage.py`, `test_class_storage.*`, `test_kit_e2e.mjs`, `test_template_ops.py` |
 
 ---
@@ -183,9 +185,9 @@ flowchart TB
 | Path | Contents |
 |---|---|
 | `template.yaml`, `samconfig.toml` | all AWS resources managed by CloudFormation; the deployed parameter values |
-| `lambda/` | `app.py` (entry, legacy CLI, publish, archive/restore, sweeper), `portal.py` (tokens, sessions, routing for `/api/...`), `backends.py` (student functions), `gateway.py`, `domains.py`, `ai.py`, `openrouter.py` |
+| `lambda/` | `app.py` (entry, legacy CLI, publish, archive/restore, sweeper), `portal.py` (tokens, sessions, routing for `/api/...`), `backends.py` (student functions), `gateway.py`, `domains.py`, `ai.py`, `openrouter.py` Class storage: `storage.py` (rules and the API's logic) and `storage_api.py` (its Lambda handler). |
 | `web/` | portal pages (`index`, `teacher`, `student`) and modules (`teacher.js`, `student.js`, `backend.js`, `github.js`, `common.js`, `check.js`, `backend-check.js`, `zip.js`), `shared.css` |
-| `student/` | files students and the kit use: `portal-deploy.mjs`, `class_ai.py/.mjs`, workflow templates, guides, starter backend templates, legacy `deploy.mjs` |
+| `student/` | files students and the kit use: `portal-deploy.mjs`, `class_ai.py/.mjs`, workflow templates, guides, starter backend templates, legacy `deploy.mjs`; `class_storage.py/.mjs` (the storage helpers) |
 | `starter/` | the student kit: `template/`, `rules/AGENTS.md`, `build-kit.mjs`, `zip.mjs`, `eval/` (AI evaluation) |
 | `admin.mjs` | operator CLI: legacy students, `teacher-setup`, `portal-publish` |
 | `custom-domain/` | the hand-made CloudFront pieces: scripts and reference files |
@@ -648,6 +650,9 @@ flowchart LR
 Enforcement, in four layers: (1) a **working scaffold** in the right layout; (2) **rules** in `AGENTS.md` and identical copies for each editor (`GEMINI.md`, `CLAUDE.md` importing it, a Claude skill, Cursor rules, Copilot instructions, `.windsurfrules`); (3) `npm run check`, about 30 rules that fail the build (layout, backend limits equal to the platform's, non-standard-library imports, syntax errors, AI called from the browser, `localhost` URLs, `VITE_` secrets, tokens and keys in any file, tracked `.env`, missing `.gitignore`); (4) the platform validating every upload server-side.
 
 - **`class_ai`** (Python and Node, single source in `student/`): `ask(prompt, ...)`, `chat(messages, ...)`, `available()`; friendly `AiError` kinds `not_enabled`, `cap_reached` (402 and 403), `disabled` (401), `busy` (429 and 5xx, one retry), `timeout` (20 s default), `provider_error`; `default=` returns a fallback text instead of raising; `mock=` sets the offline mock's reply; offline mock when no key and not on Lambda (`AWS_LAMBDA_FUNCTION_NAME` unset); the key, prompts and answers are never printed or put in errors.
+- **`class_storage`** (Python and Node, single source in `student/`): `put/get/items/delete` and `files.*`; on the platform it uses `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY`, on the student's computer a git-ignored `.class-storage/` folder; see section 4.14. The sample backend has a `/notes` route that uses it.
+- **Deploying from the computer:** `npm run login` (once) and `npm run deploy`, and the optional MCP server; see section 4.15.
+- **Kit versions:** 1.1.0 (baseline), 1.2.0 `npm run login` and the "Deploying" rules, 1.3.0 MCP server and `.vscode/mcp.json`, 1.3.1 masked token prompt, 1.4.0 class storage.
 - **Local development:** `npm run dev` (site on 3000, backend on 8788; the site forwards `/api`), hot reload for both backends, `npm run doctor`.
 - **Kit delivery:** `node admin.mjs portal-publish` builds `starter-kit.zip` deterministically from `starter/` and publishes it with `kit-version.json`; the student page's **Start here** card offers it with repository deep links and a checklist. An optional public GitHub template repository is pending (12.3).
 - **Update:** `node tools/platform.mjs status|update [--apply] [--force]` touches only the platform-managed files listed in `platform.json`, verifies the zip against the published hash, refuses unsafe paths, protects files the student edited.
@@ -711,6 +716,50 @@ sequenceDiagram
     F->>A: files upload-url name and size
     A-->>F: presigned POST, limited to that size
     F->>D: the bytes go straight to userdata/slug/name
+```
+
+</details>
+<!-- /diagram -->
+
+### 4.15 Deploying from the student's computer: login, deploy and the MCP server (F15)
+
+The GitHub route (section 4.10) is not required. A student can publish from their computer with the same `portal-deploy.mjs`, using the same token, and an AI editor can do it for them.
+
+| Part | Specification |
+|---|---|
+| `npm run login` (`node portal-deploy.mjs login`) | asks for the token with **masked input** (raw keys: the first four characters, `mds_`, then one `*` per character, so the student can see the paste arrived; Backspace, Enter and Ctrl+C work, arrow keys are ignored); piped input is read as one line; checks it with `POST /api/student/login`; writes **only** the `PORTAL_TOKEN` line of `.env.local` and keeps every other line; refuses when `git check-ignore` says `.env.local` is not ignored; never prints the token |
+| `npm run deploy` (`node portal-deploy.mjs`) | the flow of section 4.10; the token comes from `PORTAL_TOKEN`, `.env.local` or `.env`; with no token and a terminal it offers the login prompt, without a terminal it says to run `npm run login` |
+| `node portal-deploy.mjs status` | signs in and reports the token's validity and days left; deploys nothing |
+| A rejected token | 401, 403 or 404 on sign-in gives one message: run `npm run login` with the current token (a regenerated token replaces the old one) |
+| The checker | skips `.env.local` in its secret scan (that is where the token lives) but still errors when git tracks it (`env-committed`) |
+| MCP server (`tools/mcp.mjs`) | newline-delimited JSON-RPC over stdio, dependency-free. Tools: `check_project`, `deploy` (argument `confirm` must be `true`, optional `only`; runs the check first and stops on errors) and `status`. Each runs the project's own scripts with stdin closed and a timeout (check 120 s, deploy 300 s, status 60 s), one deploy at a time; output has ANSI codes removed, `mds_` tokens masked and is capped at 8,000 characters. The token is read from `.env.local`; it is never in the editor's settings |
+| Editor setup | VS Code: the kit ships `.vscode/mcp.json` (newer VS Code versions offer to migrate it to `.mcp.json`; the owner's test showed that prompt). Antigravity: `npm run mcp-config` prints the entry with absolute paths to paste under *Manage MCP Servers, View raw config* |
+| Assistant rules | the kit's "Deploying" section: run the check, ask the student "publish now?", deploy with `confirm=true` only after a yes, read the address back; if the token is missing the student runs `npm run login` themselves; the assistant never reads `.env.local` or asks for the token |
+
+<!-- diagram:f638c537 -->
+![Diagram: 4.15 Deploying from the student's computer: login, deploy and the MCP server (F15)](diagrams/technical-specification/16-4-15-deploying-from-the-student-s-computer-login.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
+```mermaid
+sequenceDiagram
+    participant S as Student
+    participant E as AI editor
+    participant M as tools/mcp.mjs
+    participant D as portal-deploy.mjs
+    participant P as Portal API
+    S->>D: npm run login (paste token, masked)
+    D->>P: check the token
+    D->>D: write PORTAL_TOKEN to .env.local (git-ignored)
+    S->>E: publish my site
+    E->>M: check_project
+    M-->>E: check passed
+    E->>S: publish now?
+    S->>E: yes
+    E->>M: deploy with confirm true
+    M->>D: check again, then deploy
+    D->>P: backend, then frontend
+    P-->>E: site live, backend ready
 ```
 
 </details>
@@ -795,6 +844,9 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 | Web | `web` | folder checks and zip builder (the zip is validated by the Lambda's own validator), dollar formatting, repository-link parsing |
 | AI helper | Python and Node | errors, retries, mock, key never printed |
 | Student kit | three steps | contents and rule copies, checker rules (about 30 fixtures), local dev servers; `platform update`; end to end deploy of the kit to the whole dev portal in Python and Node |
+| Class storage | three steps | `test_storage.py` (switch and caps, isolation between students, exact quotas, rollback, allowance, files, lifecycle, no key exposed; mutation-tested), the helpers in Python and Node against the real storage API over HTTP (`tests/storage_fixture.py`), and the template (off by default, IAM scope, retained table, private bucket) |
+| Student kit extras | steps | the MCP server driven like an editor (`test_mcp.mjs`: handshake, confirm required, a failing check blocks a deploy, token never echoed); `npm run login` (masked prompt keys, a wrong token saves nothing, the git-ignore guard) inside `test_portal_cli.mjs` |
+| Diagrams | `diagrams` | every Mermaid diagram in the documentation has a current PNG (`docs/diagrams/render.mjs` regenerates; the test needs no browser) |
 | Specification | `specification` | the machine-checked facts in section 14 equal the code |
 | Downloads and CLI | two steps | published files agree with the card; `portal-deploy.mjs` against the dev portal |
 | CloudFront functions | five steps | the real function code is extracted from the template and executed |
@@ -809,7 +861,7 @@ Techniques: in-memory fakes for S3, Lambda, CloudWatch Logs, CloudFront tenants 
 ### 7.3 Release procedure
 
 <!-- diagram:16706a27 -->
-![Diagram: 7.3 Release procedure](diagrams/technical-specification/16-7-3-release-procedure.png)
+![Diagram: 7.3 Release procedure](diagrams/technical-specification/17-7-3-release-procedure.png)
 
 <details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
@@ -862,6 +914,8 @@ Least privilege per role; no standing secrets in students' hands; every limit en
 | Secrets | environment variables write-only; the AI management key readable by two functions through one named-secret statement; student AI keys never in any API response; a test fails on any committed key, token or email |
 | Browser | no HTML parsing of text (DOM helper); no secrets in `web/`; `rel="noopener noreferrer"` on generated links |
 | Supply chain | the kit contains no secrets or personal data (scanned); the update command verifies a hash, accepts only managed paths, refuses unsafe paths; `npm install` scripts are not run on untrusted code during evaluations |
+| Token on a student's computer | stored only in `.env.local`, written by `npm run login` after a git-ignore check; the checker errors if git tracks it; masked while typed; the MCP server and the rules keep it out of chat, logs and editor settings |
+| Class storage | isolation by key (the API builds every database and S3 key from the caller's own key), hard caps and allowance, no AWS permission for any student role, private bucket with short-lived signed links (section 4.14) |
 | Recovery | S3 versioning (30 days), DynamoDB point-in-time recovery, archived sites never auto-deleted |
 
 ### 8.3 IAM at a glance
@@ -952,6 +1006,11 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 | Kit as scaffold + rules + checker + server validation | an AI cannot be trusted to follow prose alone | rules only; injecting code into students' packages |
 | `AGENTS.md` canonical with identical copies | one source, any editor | per-editor rule sets that drift |
 | Deterministic kit zip and manifest | stable hashes and safe updates | timestamps in the zip |
+| Storage isolation by an opaque key and a separate API | all student functions share one role; per-student roles would let the portal create IAM roles and delay every deploy | per-student IAM roles with `LeadingKeys` conditions |
+| DynamoDB and S3 for students, **no RDS** | on-demand, near-zero idle cost; an always-on database costs 20 to 50 times more, needs a private network, and one server would be shared | RDS or Aurora per class or per student |
+| The token is saved by a guarded login command, not typed into files | a mistyped or committed token is the main way to leak access | asking students to create `.env` by hand |
+| MCP server as an optional layer over the same scripts | works for editors that support it without a second implementation; `deploy` needs an explicit yes | MCP as the only path; a custom editor plugin |
+| Documentation diagrams as PNG plus collapsed Mermaid | readable in every viewer; one editable source with a drift test | images only; Mermaid only |
 | Tests drive real code on in-memory AWS | fast, free, deterministic; live smoke covers the rest | mocking at the call level |
 
 ### 12.2 Lessons built into the design (selected)
@@ -972,6 +1031,10 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | 8 | Custom-domain infrastructure into CloudFormation | known gap, documented |
 | 9 | Several teacher accounts; Content-Security-Policy; "Request more runs" from the student | backlog |
 | 10 | Whether each AI editor actually loads the rule files (agents in the evaluation were told to read `AGENTS.md`) | not verified |
+| 12 | **Deploy the storage connector** (`StorageEnabled=true`), run a live smoke test of presigned file upload and the API throttle, decide whether the data table needs point-in-time recovery, then pilot | open; owner approval needed for the AWS deploy |
+| 13 | **Real-editor check of the MCP server** in VS Code and Antigravity (tested only by a protocol script); VS Code now prefers `.mcp.json` over `.vscode/mcp.json`, so the kit may need to ship `.mcp.json` | open |
+| 14 | **Re-run the AI evaluation** against the kit 1.2 to 1.4 rules (Deploying, class storage) | open |
+| 15 | `platform update` cannot add new `package.json` scripts (the file is the student's); older projects need them added by hand or a fresh kit | known gap |
 | 11 | The kit's GitHub workflow has run on a real runner in the owner's test; a wider pilot will show real-world friction | partly verified |
 
 ---
@@ -995,13 +1058,15 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | R13 | Kit updates are safe | `tools/platform.mjs`, `starter/zip.mjs` | `test_kit_update.mjs` |
 | R14 | Alerts, recoverable files, backups | `template.yaml` | `test_template_ops.py`, live alarm test |
 | R15 | No secret or email in the repository | tests that scan the repo | `test_template_ai.py`, `test_template_ops.py`, `test_kit.mjs` |
-| R16 | This specification matches the code | section 14 and `tests/test_spec.mjs` | `test_spec.mjs` |
+| R17 | Per-student data and files, capped, isolated, switchable, never exposing a key | `storage.py`, `storage_api.py`, `class_storage.*`, `template.yaml` | `test_storage.py`, `test_class_storage.*`, `test_template_storage.py`, `test_kit_e2e.mjs` |
+| R18 | A student can deploy from their computer with one command, and an AI editor can do it with consent | `portal-deploy.mjs` (`login`, `status`), `tools/mcp.mjs`, `.vscode/mcp.json` | `test_portal_cli.mjs`, `test_mcp.mjs`, `test_kit.mjs` |
+| R16 | This specification matches the code | section 14 and `tests/test_spec.py` | `test_spec.py` |
 
 ---
 
 ## 14. Machine-checked facts
 
-`tests/test_spec.mjs` reads the JSON block below and compares every value with the code and the template. If you change a limit, a timeout, a default, the kit version or the number of test steps, update this block **and** the prose above in the same commit.
+`tests/test_spec.py` reads the JSON block below and compares every value with the code and the template. If you change a limit, a timeout, a default, the kit version or the number of test steps, update this block **and** the prose above in the same commit.
 
 ```json spec-facts
 {
