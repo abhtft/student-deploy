@@ -13,6 +13,14 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+/** Dollars for small AI amounts: $0.25, $0.0123, $12.50 (never rounds a tiny amount to $0.00). */
+export function usd(n) {
+  const value = Number(n) || 0;
+  if (value === 0) return '$0.00';
+  const text = value >= 1 ? value.toFixed(2) : value.toFixed(4).replace(/0+$/, '').replace(/(\.\d)$/, '$10');
+  return `$${text === '0.' || text === '0.0' ? '0.0001' : text}`;
+}
+
 /** Replace an element's children, skipping null/false so conditional children don't render as text. */
 export const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
 
@@ -114,7 +122,9 @@ export async function copyText(text) {
 
 export function toast(message) {
   const el = h('div', { class: 'toast', role: 'status' }, message);
-  document.body.append(el);
+  // inside the open dialog (if any): a dialog is shown above everything else on the page, so a toast outside it would be hidden
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  host.append(el);
   setTimeout(() => el.remove(), 2500);
 }
 
@@ -127,7 +137,7 @@ export function ask({ title, text, fields = [], confirm = 'OK', danger = false }
     const inputs = fields.map((f) => {
       const control = f.options
         ? h('select', { name: f.name }, f.options.map(([value, label]) => h('option', { value, selected: String(value) === String(f.value) }, label)))
-        : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, required: f.required, placeholder: f.placeholder, maxlength: f.maxlength });
+        : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, step: f.step, required: f.required, placeholder: f.placeholder, maxlength: f.maxlength });
       return h('label', {}, f.label, control);
     });
     const submit = h('button', { class: danger ? 'danger' : 'primary', type: 'submit' }, confirm);

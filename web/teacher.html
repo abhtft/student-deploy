@@ -23,7 +23,7 @@
 
   <section id="app" class="hidden">
     <div class="topbar">
-      <h1>Teacher dashboard</h1>
+      <div class="brand"><span class="logo" aria-hidden="true">SD</span><div><h1>Teacher dashboard</h1><div class="small muted">Student Deploy</div></div></div>
       <div class="actions">
         <button id="new-token" class="primary">New token</button>
         <button id="refresh" title="Reload the list">Refresh</button>
@@ -31,12 +31,15 @@
       </div>
     </div>
     <div id="created" class="card hidden" style="margin-bottom:16px"></div>
+    <div id="stats" class="tiles" aria-label="Summary"></div>
     <div class="tabs" role="tablist">
-      <button role="tab" id="tab-tokens" aria-selected="true">Tokens</button>
+      <button role="tab" id="tab-students" aria-selected="true">Students</button>
       <button role="tab" id="tab-requests" aria-selected="false">Requests <span id="badge" class="badge hidden"></span></button>
+      <button role="tab" id="tab-storage" aria-selected="false">Storage</button>
     </div>
+    <div id="toolbar" class="toolbar"><input id="search" type="search" placeholder="Search students by name or site" aria-label="Search students" autocomplete="off"></div>
     <div id="error" class="error" role="alert"></div>
-    <div id="panel" class="card" style="padding:0"></div>
+    <div id="panel" class="card list"></div>
   </section>
 </main>
 <script type="module" src="teacher.js"></script>

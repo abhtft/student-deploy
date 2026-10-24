@@ -11,6 +11,11 @@ Teacher (password -> signed session, 8 h):
   POST /api/admin/tokens/{id}/approve    {days}      new duration counted from now; brings an offline site back
   POST /api/admin/tokens/{id}/deny       {reason?}
   POST /api/admin/tokens/{id}/domain-access   {enabled}   switch custom domains on/off for a student
+  POST /api/admin/tokens/{id}/backend    {enabled?, runs_limit?, runs_period?}   backend on/off and run allowance
+  POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?}   class AI connector (ai.py); {} refreshes usage
+  POST /api/admin/tokens/{id}/storage    {enabled?, data_mb?, files_mb?, ops_limit?, ops_period?}   class storage connector (storage.py)
+  POST /api/admin/tokens/{id}/storage/clear   {scope: data | files | all}   delete a student's stored data and/or files
+  GET  /api/admin/storage                storage across the class: per student sizes and counts, totals (never the content)
 
 Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/login                {token}
@@ -18,6 +23,10 @@ Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/regen-request        {note?}     only in the last WARN_DAYS before expiry, or after it
   POST /api/student/upload-url, /api/student/publish   deploy (handled in app.py)
   PUT/DELETE /api/student/domain, GET /api/student/domain/status   custom domain (see domains.py)
+  GET/DELETE /api/student/backend, POST .../backend/upload-url|publish, PUT .../backend/env, DELETE .../backend/env/<NAME>,
+  GET .../backend/logs                                              student backend (see backends.py; runs behind gateway.py)
+  GET  /api/student/ai                   refresh the AI usage numbers (ai.py)
+  GET  /api/student/storage              storage usage including the file count and size (storage.py)
 
 A token is active until expires_at, "expired" (read-only) for GRACE_DAYS, then "offline".
 Only a SHA-256 of each token is stored. Teacher and student sessions use different signing keys.
@@ -29,6 +38,7 @@ import json
 import os
 import re
 import secrets
+import threading
 import time
 
 RESERVED = {"sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"}
@@ -98,12 +108,52 @@ class DynamoStore:
             args["ExpressionAttributeValues"] = values
         return _plain(self.table.update_item(**args)["Attributes"])
 
+    def counter_add(self, pk, delta=1, limit=None, ttl=None, now=None):
+        """Atomically add to item["count"]. With a limit, the new count may never exceed it: returns the new count,
+        or None when the limit would be exceeded (no overshoot, even with parallel callers)."""
+        from botocore.exceptions import ClientError
+        if limit is not None and limit <= 0:
+            return None
+        names, values = {"#c": "count", "#u": "updated_at"}, {":d": delta, ":u": int(now if now is not None else time.time())}
+        update = "SET #u = :u"
+        if ttl is not None:
+            names["#t"], values[":t"] = "ttl", ttl
+            update += ", #t = :t"
+        update += " ADD #c :d"
+        extra = {}
+        if limit is not None:
+            values[":max"] = limit - delta
+            extra["ConditionExpression"] = "attribute_not_exists(#c) OR #c <= :max"
+        try:
+            result = self.table.update_item(Key={"pk": pk}, UpdateExpression=update, ExpressionAttributeNames=names,
+                                            ExpressionAttributeValues=values, ReturnValues="UPDATED_NEW", **extra)
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return None
+            raise
+        return int(result["Attributes"]["count"])
+
+    def counter_sub(self, pk, now=None):
+        """Decrement item["count"] but never below zero. Returns the new count or None if it was already zero."""
+        from botocore.exceptions import ClientError
+        try:
+            result = self.table.update_item(
+                Key={"pk": pk}, UpdateExpression="SET #u = :u ADD #c :n", ConditionExpression="#c > :z",
+                ExpressionAttributeNames={"#c": "count", "#u": "updated_at"},
+                ExpressionAttributeValues={":n": -1, ":z": 0, ":u": int(now if now is not None else time.time())}, ReturnValues="UPDATED_NEW")
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "ConditionalCheckFailedException":
+                return None
+            raise
+        return int(result["Attributes"]["count"])
+
 
 class MemoryStore:
     """Same interface as DynamoStore; used by tests."""
 
     def __init__(self):
         self.items = {}
+        self.lock = threading.Lock()
 
     def get(self, pk):
         return json.loads(json.dumps(self.items[pk])) if pk in self.items else None
@@ -125,6 +175,28 @@ class MemoryStore:
         for key in remove:
             self.items[pk].pop(key, None)
         return self.get(pk)
+
+    def counter_add(self, pk, delta=1, limit=None, ttl=None, now=None):
+        with self.lock:
+            if limit is not None and limit <= 0:
+                return None
+            item = self.items.setdefault(pk, {"pk": pk})
+            count = item.get("count", 0)
+            if limit is not None and count + delta > limit:
+                return None
+            item["count"], item["updated_at"] = count + delta, int(now if now is not None else time.time())
+            if ttl is not None:
+                item["ttl"] = ttl
+            return item["count"]
+
+    def counter_sub(self, pk, now=None):
+        with self.lock:
+            item = self.items.get(pk)
+            if not item or item.get("count", 0) <= 0:
+                return None
+            item["count"] -= 1
+            item["updated_at"] = int(now if now is not None else time.time())
+            return item["count"]
 
 
 def _plain(value):
@@ -243,7 +315,25 @@ def view(item, now, site_url):
         "archived_at": item.get("archived_at"),
         "can_request_regen": status != "revoked" and (status == "offline" or now >= item["expires_at"] - WARN_DAYS * DAY) and regen["state"] != "pending",
         "custom_domain": domain_view(item),
+        "backend": backend_view(item, now),
+        "ai": ai_view(item, now),
+        "storage": storage_view(item, now),
     }
+
+
+def backend_view(item, now):
+    import backends
+    return backends.view(item, now)
+
+
+def ai_view(item, now):
+    import ai
+    return ai.view(item, now)
+
+
+def storage_view(item, now):
+    import storage
+    return storage.view(item, now)
 
 
 DOMAIN_MESSAGES = {
@@ -347,6 +437,16 @@ def dispatch(method, path, body, event, now, site_url):
         return regen_request(student_token(event, now), body, now, site_url)
     if (method, path) == ("GET", "/api/student/me"):
         return reply(200, token=view(student_token(event, now), now, site_url))
+    if path == "/api/student/backend" or path.startswith("/api/student/backend/"):
+        return student_backend(method, path, body, event, now, site_url)
+    if (method, path) == ("GET", "/api/student/ai"):
+        import ai
+        return reply(200, token=view(ai.refresh_usage(student_token(event, now), now), now, site_url))
+    if (method, path) == ("GET", "/api/student/storage"):
+        import storage
+        item = student_token(event, now)
+        files = storage.files_usage(item) if storage.available() and storage.settings(item).get("enabled") else None
+        return reply(200, token=view(item, now, site_url), files=files)
     if path in ("/api/student/domain", "/api/student/domain/status") and method in ("PUT", "DELETE", "GET"):
         import domains
         item = student_token(event, now)
@@ -371,6 +471,30 @@ def dispatch(method, path, body, event, now, site_url):
             pending = [i for i in db().list_prefix("tok#") if (i.get("regen") or {}).get("state") == "pending" and not i.get("revoked")]
             pending.sort(key=lambda i: i["regen"]["requested_at"])
             return reply(200, requests=[view(i, now, site_url) for i in pending])
+        backend = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/backend", path)
+        if method == "POST" and backend:
+            import backends
+            item = backends.set_backend(get_token(backend.group(1)), body, now)
+            return reply(200, token=view(item, now, site_url))
+        ai_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/ai", path)
+        if method == "POST" and ai_route:
+            import ai
+            item = ai.set_ai(get_token(ai_route.group(1)), body, now)
+            return reply(200, token=view(item, now, site_url))
+        if (method, path) == ("GET", "/api/admin/storage"):
+            import storage
+            return reply(200, **storage.overview(now))
+        clear_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/storage/clear", path)
+        if method == "POST" and clear_route:
+            import storage
+            item = get_token(clear_route.group(1))
+            cleared = storage.clear(item, body.get("scope"), now)
+            return reply(200, cleared=cleared, token=view(item, now, site_url))
+        storage_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/storage", path)
+        if method == "POST" and storage_route:
+            import storage
+            item = storage.set_storage(get_token(storage_route.group(1)), body, now)
+            return reply(200, token=view(item, now, site_url))
         access = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/domain-access", path)
         if method == "POST" and access:
             import domains
@@ -380,6 +504,30 @@ def dispatch(method, path, body, event, now, site_url):
         if method == "POST" and match:
             return token_action(get_token(match.group(1)), match.group(2), body, now, site_url)
     return reply(404, error="Unknown route.")
+
+
+def student_backend(method, path, body, event, now, site_url):
+    import backends
+    item = student_token(event, now)
+    sub = path[len("/api/student/backend"):]
+    env_name = re.fullmatch(r"/env/([A-Za-z_][A-Za-z0-9_]*)", sub)
+    if (method, sub) == ("GET", ""):
+        item = backends.advance(item, now)  # setup advances one step per call, like the custom-domain poll
+    elif (method, sub) == ("POST", "/upload-url"):
+        return reply(200, **backends.upload_url(item, now))
+    elif (method, sub) == ("POST", "/publish"):
+        item = backends.publish(item, now)
+    elif (method, sub) == ("PUT", "/env"):
+        item = backends.set_env(item, body.get("name"), body.get("value"), now)
+    elif method == "DELETE" and env_name:
+        item = backends.delete_env(item, env_name.group(1), now)
+    elif (method, sub) == ("GET", "/logs"):
+        return reply(200, lines=backends.logs(item, now))
+    elif (method, sub) == ("DELETE", ""):
+        item = backends.remove(item, now)
+    else:
+        return reply(404, error="Unknown route.")
+    return reply(200, token=view(item, now, site_url))
 
 
 def parse_body(event):
@@ -475,7 +623,13 @@ def sweep(now=None):
         import domains
         removed, failed_removals = domains.finish_pending_removals()
         failed += failed_removals
-    return {"archived": done, "failed": failed, "domains_removed": removed}
+    import ai
+    ai_result = ai.sweep(now)  # disables the AI key of every student who is no longer active (and re-enables after an extension)
+    failed += ai_result["failed"]
+    result = {"archived": done, "failed": failed, "domains_removed": removed}
+    if ai_result["changed"]:
+        result["ai_keys_changed"] = ai_result["changed"]
+    return result
 
 
 def token_action(item, action, body, now, site_url):
@@ -498,6 +652,8 @@ def token_action(item, action, body, now, site_url):
         else:
             reason = str(body.get("reason") or "").strip()[:300]
             item = db().update(item["pk"], {"regen": {**regen, "state": "denied", "resolved_at": now, "reason": reason}})
+    import ai
+    item = ai.sync_lifecycle(item, now)  # revoke/offline/expiry disable the student's AI key; extend/approve enable it again
     return reply(200, token=view(item, now, site_url))
 
 

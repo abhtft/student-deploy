@@ -1,0 +1,13 @@
+{
+  "kit": "class-platform-starter",
+  "kitVersion": "1.4.0",
+  "portal": "https://deploy.margdarshakss.com",
+  "frontend": "frontend",
+  "backend": "backend",
+  "backendRuntime": "python",
+  "managed": [
+    "AGENTS.md", "GEMINI.md", "CLAUDE.md", ".claude/", ".cursor/", ".github/copilot-instructions.md", ".windsurfrules",
+    ".github/workflows/deploy.yml", ".vscode/mcp.json", "tools/", "portal-deploy.mjs", "backend/class_ai.py", "variants/node-backend/class_ai.mjs",
+    "backend/class_ai.mjs", "backend/class_storage.py", "variants/node-backend/class_storage.mjs", "backend/class_storage.mjs", "PROMPTS.md"
+  ]
+}

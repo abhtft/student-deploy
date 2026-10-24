@@ -1,11 +1,14 @@
 // Tests for web/check.js (folder checks) and web/zip.js (zip builder). The zip is verified by the real Lambda validation.
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { webcrypto as crypto } from 'node:crypto';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { analyzeBackend } from '../web/backend-check.js';
 import { analyze } from '../web/check.js';
+import { usd } from '../web/common.js';
 import { buildZip } from '../web/zip.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -61,6 +64,44 @@ assert.ok(!r.ok && /too large/.test(errors(r)));
 r = await analyze([item('index.html', BUILT), { path: 'photos.bin', file: { size: 60 * 1024 * 1024, text: async () => '' } }]);
 assert.ok(r.ok && r.checks.some((c) => c.level === 'warn' && /60 MB/.test(c.text)), 'big sites get an early warning, not a block');
 
+// ---- backend folder checks ----
+const file = (path, size = 10) => ({ path, file: { size } });
+let b = analyzeBackend([file('index.mjs'), file('lib/util.mjs')]);
+assert.ok(b.ok && b.root === '' && b.count === 2, 'entry at the top');
+b = analyzeBackend([file('api/app.py'), file('api/helpers.py'), file('api/__MACOSX/x'), file('api/.DS_Store')]);
+assert.ok(b.ok && b.root === 'api/' && b.files.map((f) => f.path).sort().join() === 'app.py,helpers.py', 'one folder down, junk ignored');
+b = analyzeBackend([file('proj/index.js'), file('proj/node_modules/x/y.js')]);
+assert.ok(b.ok && b.files.length === 2, 'bundled node_modules are allowed');
+b = analyzeBackend([file('readme.txt')]);
+assert.ok(!b.ok && /No entry file/.test(b.checks[0].text));
+b = analyzeBackend([file('index.mjs'), file('app.py')]);
+assert.ok(!b.ok && /only one entry file/.test(b.checks.find((c) => c.level === 'error').text));
+b = analyzeBackend([file('app.py'), file('.env'), file('sub/.env.local')]);
+assert.ok(!b.ok && /\.env/.test(b.checks.find((c) => c.level === 'error').text), 'secrets are refused');
+b = analyzeBackend(Array.from({ length: 501 }, (_, i) => file(i ? `f${i}.py` : 'app.py')));
+assert.ok(!b.ok && /Too many files/.test(b.checks.find((c) => c.level === 'error').text));
+b = analyzeBackend([file('app.py', 51 * 1024 * 1024)]);
+assert.ok(!b.ok && /limit is 50 MB/.test(b.checks.find((c) => c.level === 'error').text));
+b = analyzeBackend([file('app.py', 6 * 1024 * 1024)]);
+assert.ok(b.ok && b.checks.some((c) => c.level === 'warn'), 'over the zip limit only warns before zipping');
+assert.ok(!analyzeBackend([]).ok);
+b = analyzeBackend([file('backend/app.py'), file('backend/__pycache__/app.cpython-312.pyc'), file('backend/helpers.pyc')]);
+assert.ok(b.ok && b.files.map((f) => f.path).join() === 'app.py', 'Python bytecode folders are skipped automatically');
+
+// ---- local backend runner (student/backend-test.mjs) on both starter templates ----
+const runner = join(here, '..', 'student', 'backend-test.mjs');
+const templates = join(here, '..', 'student', 'backend-template');
+const runBackend = (folder, ...args) => spawnSync('node', [runner, join(templates, folder), ...args], { encoding: 'utf8' });
+for (const folder of ['node', 'python']) {
+  let r = runBackend(folder, 'GET', '/hello?name=Sam');
+  assert.equal(r.status, 0, r.stderr);
+  assert.match(r.stdout, /^200\n\{"message":\s?"Hello, Sam!"\}/m, `${folder}: ${r.stdout}`);
+  r = runBackend(folder, 'POST', '/echo', '{"a":1}');
+  assert.match(r.stdout, /"youSent":\s?\{"a":\s?1\}/, folder);
+  assert.match(runBackend(folder, 'GET', '/missing').stdout, /^404/m, folder);
+}
+assert.notEqual(spawnSync('node', [runner, tmpdir()], { encoding: 'utf8' }).status, 0, 'a folder without an entry file fails clearly');
+
 // ---- zip: build in Node, then let the real Lambda code validate and read it ----
 const files = [
   { path: 'index.html', file: new Blob([BUILT.repeat(50)]) },
@@ -93,3 +134,21 @@ print("ok")`;
   rmSync(dir, { recursive: true, force: true });
 }
 console.log('test_web.mjs: all passed');
+
+// dollar amounts on the AI cards: never round a tiny amount to $0.00, always two decimals for round amounts
+for (const [n, want] of [[0, '$0.00'], [0.25, '$0.25'], [0.5, '$0.50'], [0.1, '$0.10'], [0.0123, '$0.0123'], [0.000095, '$0.0001'], [12.5, '$12.50'], [20, '$20.00']]) {
+  assert.equal(usd(n), want, `usd(${n})`);
+}
+
+// the "Start here" card: only well-formed GitHub repository addresses produce links, and links never carry anything but owner/repo
+const { parseRepo, repoLinks, KIT_FILES } = await import('../web/github.js');
+assert.deepEqual(parseRepo('https://github.com/alice/my-site'), { owner: 'alice', repo: 'my-site', base: 'https://github.com/alice/my-site' });
+assert.equal(parseRepo('github.com/alice/my-site.git/').base, 'https://github.com/alice/my-site');
+assert.equal(parseRepo('  https://www.github.com/Alice-1/repo_name.v2  ').repo, 'repo_name.v2');
+for (const bad of ['', 'https://github.com/alice', 'https://evil.com/alice/repo', 'https://github.com/alice/repo/extra', 'http://github.com/alice/repo', 'https://github.com/-bad-/repo',
+  'https://github.com/alice/..', 'https://github.com/alice/repo?x=1', 'https://github.com/alice/repo#frag', 'javascript:alert(1)', 'https://github.com/alice/re po', 'https://github.com/a"b/repo']) {
+  assert.equal(parseRepo(bad), null, `must reject: ${bad}`);
+}
+assert.deepEqual(repoLinks(parseRepo('https://github.com/alice/site')), {
+  secret: 'https://github.com/alice/site/settings/secrets/actions/new', actions: 'https://github.com/alice/site/actions', settings: 'https://github.com/alice/site/settings' });
+assert.deepEqual(KIT_FILES, { zip: 'starter-kit.zip', version: 'kit-version.json' });
