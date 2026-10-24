@@ -68,8 +68,8 @@ function tokenRow(t) {
       live && t.backend.available && t.backend.enabled ? btn('+1,000', () => addRuns(t)) : null,
       live && t.backend.available && t.ai.available ? btn(t.ai.enabled ? 'AI: on' : 'AI: off', () => toggleAi(t)) : null,
       live && t.ai.available && t.ai.enabled ? btn('AI cap…', () => editAi(t)) : null,
-      live && t.backend.available && t.storage.available ? btn(t.storage.enabled ? 'Storage: on' : 'Storage: off', () => toggleStorage(t)) : null,
-      live && t.storage.available && t.storage.enabled ? btn('Storage caps…', () => editStorage(t)) : null,
+      live && t.backend.available && t.storage?.available ? btn(t.storage.enabled ? 'Storage: on' : 'Storage: off', () => toggleStorage(t)) : null,
+      live && t.storage?.available && t.storage.enabled ? btn('Storage caps…', () => editStorage(t)) : null,
       live ? btn('Extend', () => extend(t)) : null,
       live && !t.archived ? btn('Take offline', () => offline(t)) : null,
       live ? btn('Revoke', () => revoke(t), 'danger') : null));
@@ -129,7 +129,7 @@ const MB = 1048576;
 const mb = (bytes) => `${(bytes / MB).toFixed(bytes < MB * 10 ? 1 : 0)} MB`;
 
 function storageLine(t) {
-  const s = t.storage;
+  const s = t.storage || { available: false }; // an older server does not send it
   if (!s.available || !s.enabled) return null;
   const u = s.usage || { data_bytes: 0, items: 0, ops_used: 0 };
   const l = s.limits;
