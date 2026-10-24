@@ -4,7 +4,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
@@ -188,6 +188,26 @@ try {
   });
   writeFileSync(join(unsafe, '.gitignore'), '.env.local\n');
   check('login: works once .env.local is git-ignored', () => assert.equal(login(unsafe, `${tokens.Alice}\n`).status, 0));
+  // 6. what the student sees while pasting: mds_ and one * per character; keys behave like a normal prompt
+  process.env.PORTAL_DEPLOY_NO_MAIN = '1';
+  const { editLine, maskSecret } = await import(`${pathToFileURL(join(root, 'student', 'portal-deploy.mjs')).href}?keys`);
+  check('typing shows mds_ then stars, never the rest of the token', () => {
+    assert.equal(maskSecret(''), '');
+    assert.equal(maskSecret('mds'), 'mds');
+    assert.equal(maskSecret('mds_abcdef'), 'mds_******');
+    assert.ok(!maskSecret(tokens.Alice).includes(tokens.Alice.slice(4, 10)));
+    assert.equal(maskSecret(tokens.Alice).length, tokens.Alice.length);
+  });
+  check('a pasted token arrives in one chunk, Enter finishes, Backspace deletes, Ctrl+C cancels, arrows are ignored', () => {
+    assert.deepEqual(editLine('', tokens.Alice), { buffer: tokens.Alice, done: false, abort: false });
+    assert.deepEqual(editLine('mds_abc', '\r'), { buffer: 'mds_abc', done: true, abort: false });
+    assert.equal(editLine('mds_abc', '\u007f').buffer, 'mds_ab');
+    assert.equal(editLine('', '\u007f').buffer, '');
+    assert.equal(editLine('mds_ab', 'c\n').done, true);
+    assert.equal(editLine('mds_ab', '\u0003').abort, true);
+    assert.equal(editLine('mds_ab', '\u001b[A').buffer, 'mds_ab');
+    assert.equal(editLine('', 'mds_ab\tc').buffer, 'mds_abc', 'other control keys are ignored');
+  });
   console.log('portal-deploy CLI: all passed');
 } finally {
   server.kill();

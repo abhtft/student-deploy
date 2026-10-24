@@ -15,8 +15,6 @@
 // Your token is read from PORTAL_TOKEN (environment, .env.local or .env). Never commit it.
 // No npm install needed - only Node 20+. In GitHub Actions store the token as the secret PORTAL_TOKEN.
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { createInterface } from 'node:readline';
-import { Writable } from 'node:stream';
 import { join, relative, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { deflateRawSync } from 'node:zlib';
@@ -50,19 +48,50 @@ function readToken() {
   return null;
 }
 
-/** One line from the keyboard. With `hidden` the typed or pasted characters are not shown (a token is a password). Piped input works too. */
+/** Applies one chunk of typed or pasted keys to the line being typed. Enter ends it, Backspace deletes, Ctrl+C cancels, other control keys are ignored. */
+export function editLine(buffer, chunk) {
+  if (chunk.startsWith('\u001b')) return { buffer, done: false, abort: false }; // arrow keys and other escape sequences
+  for (const ch of chunk) {
+    if (ch === '\r' || ch === '\n') return { buffer, done: true, abort: false };
+    if (ch === '\u0003') return { buffer, done: false, abort: true };
+    if (ch === '\u007f' || ch === '\b') buffer = buffer.slice(0, -1);
+    else if (ch >= ' ') buffer += ch;
+  }
+  return { buffer, done: false, abort: false };
+}
+
+/** What is shown for a secret while it is typed: the first 4 characters (so "mds_" proves the paste arrived), then one * per character. */
+export const maskSecret = (text) => text.slice(0, 4) + '*'.repeat(Math.max(0, text.length - 4));
+
+/** One line from the keyboard. With `hidden` the characters are masked as they arrive (see maskSecret). Piped input works too. */
 async function ask(question, { hidden = false } = {}) {
   process.stdout.write(question);
-  if (!process.stdin.isTTY) {
+  if (!process.stdin.isTTY || typeof process.stdin.setRawMode !== 'function') {
     let data = '';
     for await (const chunk of process.stdin) { data += chunk; if (data.includes('\n')) break; }
     return data.split(/\r?\n/)[0].trim();
   }
-  const quiet = new Writable({ write: (_chunk, _encoding, done) => done() });
-  const rl = createInterface({ input: process.stdin, output: hidden ? quiet : process.stdout, terminal: true });
-  return new Promise((resolve) => {
-    rl.once('line', (line) => { rl.close(); if (hidden) process.stdout.write('\n'); resolve(line.trim()); });
-    rl.once('close', () => resolve(''));
+  return new Promise((resolve, reject) => {
+    let line = '';
+    const show = () => process.stdout.write(`\r${question}${hidden ? maskSecret(line) : line}\u001b[K`);
+    const finish = (error) => {
+      process.stdin.off('data', onData);
+      process.stdin.setRawMode(false);
+      process.stdin.pause();
+      process.stdout.write('\n');
+      if (error) reject(error); else resolve(line.trim());
+    };
+    function onData(chunk) {
+      const next = editLine(line, String(chunk));
+      line = next.buffer;
+      if (next.abort) { process.stderr.write('\n✖ Cancelled.\n'); return finish(new Stop('Cancelled.')); }
+      show();
+      if (next.done) finish();
+    }
+    process.stdin.setEncoding('utf8');
+    process.stdin.setRawMode(true);
+    process.stdin.resume();
+    process.stdin.on('data', onData);
   });
 }
 
@@ -77,7 +106,7 @@ async function status() {
 
 /** `login`: ask for the token, check it with the portal, save it to .env.local. The token is never printed. */
 async function login(given) {
-  if (!given) console.log('Paste your portal token (the one your teacher gave you). What you paste is hidden. Press Enter when done.');
+  if (!given) console.log('Paste your portal token (the one your teacher gave you) and press Enter. You will see mds_ and one * per character: the rest is hidden on purpose.');
   const token = (given ?? await ask('Token: ', { hidden: true })).replace(/^["']|["']$/g, '');
   if (!/^[\w.~-]{8,}$/.test(token)) fail('That does not look like a portal token (it starts with mds_ and has no spaces). Copy it again from your teacher or the portal.');
   // never write a secret to a file that git would pick up: .env.local must be ignored
@@ -273,7 +302,10 @@ async function main() {
   if (doFrontend) await deployFrontend(session, frontendDir);
 }
 
-main().catch((error) => {
-  if (!(error instanceof Stop)) console.error(error);
-  process.exitCode = 1;
-});
+// (tests import editLine and maskSecret without starting a deploy)
+if (!process.env.PORTAL_DEPLOY_NO_MAIN) {
+  main().catch((error) => {
+    if (!(error instanceof Stop)) console.error(error);
+    process.exitCode = 1;
+  });
+}
