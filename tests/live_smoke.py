@@ -3,6 +3,7 @@ teacher on/off, the in-flight limiter and removal. It needs AWS credentials for 
 
 Run it by hand after a deploy:  python tests/live_smoke.py   (takes about 3 minutes; not part of CI)
 It creates one temporary student (slug zz-backendtest) directly in DynamoDB and removes everything it made, even on failure.
+Section J exercises the class storage connector (needs the stack deployed with StorageEnabled=true; it is skipped otherwise).
 Override the address with SMOKE_BASE_URL / SMOKE_ROOT_DOMAIN when testing another stack."""
 import concurrent.futures
 import hashlib
@@ -32,6 +33,9 @@ logs = boto3.client("logs", region_name="us-east-1")
 table = boto3.resource("dynamodb", region_name="us-east-1").Table(
     cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="TokensTable")["StackResourceDetail"]["PhysicalResourceId"])
 BUCKET = cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="SitesBucket")["StackResourceDetail"]["PhysicalResourceId"]
+STACK_OUTPUTS = {o["OutputKey"]: o["OutputValue"] for o in cfn.describe_stacks(StackName="student-hosting")["Stacks"][0]["Outputs"]}
+STORAGE_URL = STACK_OUTPUTS.get("StorageApiUrl", "")
+DATA_TABLE = STACK_OUTPUTS.get("StudentDataTableName", "")
 
 token = "mds_" + secrets.token_urlsafe(16)
 tid = hashlib.sha256(token.encode()).hexdigest()
@@ -114,7 +118,7 @@ def load_platform_modules():
     """The platform's own Lambda modules, run here with the real AWS clients (the teacher API needs a password, so the class AI
     connector is switched on and off through the same code the portal runs). Returns the openrouter module."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lambda"))
-    os.environ.update(TOKENS_TABLE=table.name, AI_ENABLED="true", AI_SECRET_NAME="openrouter", BACKEND_ENABLED="true", BUCKET=BUCKET,
+    os.environ.update(TOKENS_TABLE=table.name, STORAGE_ENABLED="true" if STORAGE_URL else "false", STORAGE_URL=STORAGE_URL, DATA_TABLE=DATA_TABLE, AI_ENABLED="true", AI_SECRET_NAME="openrouter", BACKEND_ENABLED="true", BUCKET=BUCKET,
                       AWS_DEFAULT_REGION="us-east-1", AWS_REGION="us-east-1", ROOT_DOMAIN=os.environ.get("SMOKE_ROOT_DOMAIN", "margdarshakss.com"))
     import openrouter
     return openrouter
@@ -142,14 +146,19 @@ def cleanup():
     scan = table.scan(FilterExpression="contains(pk, :s) OR pk = :g", ExpressionAttributeValues={":s": SLUG, ":g": "inflight#global"})
     for item in scan["Items"]:
         table.delete_item(Key={"pk": item["pk"]})
+    if DATA_TABLE:
+        data_table = boto3.resource("dynamodb", region_name="us-east-1").Table(DATA_TABLE)
+        for row in data_table.scan(FilterExpression="begins_with(s, :p)", ExpressionAttributeValues={":p": f"{SLUG}#"})["Items"]:
+            data_table.delete_item(Key={"s": row["s"], "id": row["id"]})
     table.delete_item(Key={"pk": f"tok#{tid}"})
     table.delete_item(Key={"pk": f"slug#{SLUG}"})
     s3 = boto3.client("s3", region_name="us-east-1")
     s3.delete_object(Bucket=BUCKET, Key=f"uploads/{SLUG}-backend.zip")
     s3.delete_object(Bucket=BUCKET, Key=f"uploads/{SLUG}.zip")
-    for page in s3.get_paginator("list_object_versions").paginate(Bucket=BUCKET, Prefix=f"sites/{SLUG}/"):
-        for v in (page.get("Versions") or []) + (page.get("DeleteMarkers") or []):
-            s3.delete_object(Bucket=BUCKET, Key=v["Key"], VersionId=v["VersionId"])
+    for prefix in (f"sites/{SLUG}/", f"userdata/{SLUG}/"):
+        for page in s3.get_paginator("list_object_versions").paginate(Bucket=BUCKET, Prefix=prefix):
+            for v in (page.get("Versions") or []) + (page.get("DeleteMarkers") or []):
+                s3.delete_object(Bucket=BUCKET, Key=v["Key"], VersionId=v["VersionId"])
 
 
 table.put_item(Item={"pk": f"slug#{SLUG}", "token": tid})
@@ -360,6 +369,87 @@ try:
         check("KIT: the kit's site is served", s == 200 and "root" in str(b), (s, str(b)[:80]))
         s, b, _ = site("/api/ask", "POST", {"prompt": ""})
         check("KIT: the kit validates input (400 for an empty prompt)", s == 400, (s, b))
+
+    # ---------- J: class storage, the real thing: key isolation, data, quotas, presigned file upload and download, CORS, off switch ----------
+    if not STORAGE_URL:
+        log("SKIP section J: the stack was deployed without StorageEnabled")
+    else:
+        import storage as storage_module
+        item = portal.db().get(f"tok#{tid}")
+        check("STORAGE: the student view says the connector exists but is off", api("GET", "/api/student/me", session=session)[1]["token"]["storage"]["enabled"] is False)
+        for _ in range(30):  # the function may still be finishing the kit deploy: wait until AWS says it is done
+            if lam.get_function_configuration(FunctionName=f"sd-{SLUG}").get("LastUpdateStatus") == "Successful":
+                break
+            time.sleep(1)
+        item = storage_module.set_storage(item, {"enabled": True, "data_mb": 1, "files_mb": 1, "ops_limit": 60, "ops_period": "total"}, ai_now())
+        key = storage_module.settings(item)["key"]
+        cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
+        names = (cfg.get("Environment") or {}).get("Variables", {})
+        check("STORAGE: the function got the storage address and key (and kept its AI variables)",
+              names.get("CLASS_STORAGE_URL") == STORAGE_URL and names.get("CLASS_STORAGE_KEY") == key and "OPENAI_API_KEY" in names, sorted(names))
+
+        def sapi(method, path, body=None, auth=key, query=""):
+            headers = {"content-type": "application/json", **({"authorization": f"Bearer {auth}"} if auth else {})}
+            status, data, _ = http(method, STORAGE_URL + path + query, body, headers)
+            return status, data
+
+        check("STORAGE: no key is refused", sapi("GET", "/v1/data/n/x", auth=None)[0] == 401)
+        check("STORAGE: a key with the wrong secret is refused", sapi("GET", "/v1/data/n/x", auth=key[:-2] + "zz")[0] == 401)
+        check("STORAGE: another student's name with this secret is refused", sapi("GET", "/v1/data/n/x", auth="cs_somebody-else." + key.split(".", 1)[1])[0] == 401)
+        s, b = sapi("PUT", "/v1/data/live/a", {"value": {"hello": "world", "n": [1, 2]}})
+        check("STORAGE: put a record through the real API", s == 200 and b["id"] == "a", (s, b))
+        s, b = sapi("GET", "/v1/data/live/a")
+        check("STORAGE: read it back", s == 200 and b["value"] == {"hello": "world", "n": [1, 2]}, (s, b))
+        sapi("PUT", "/v1/data/live/b", {"value": "second"})
+        s, b = sapi("GET", "/v1/data/live")
+        check("STORAGE: list returns both records in id order", s == 200 and [i["id"] for i in b["items"]] == ["a", "b"], (s, b))
+        s, b = sapi("PUT", "/v1/data/live/big", {"value": "x" * 70000})
+        check("STORAGE: a value over 64 KB is refused", s == 413 and b["error"] == "too_large", (s, b))
+        check("STORAGE: DynamoDB holds the record under the student's own partition",
+              boto3.resource("dynamodb", region_name="us-east-1").Table(DATA_TABLE).get_item(Key={"s": f"{SLUG}#live", "id": "a"}).get("Item") is not None)
+
+        # the kit deployed in section I has a /notes route that uses class_storage inside the real function
+        s, b, _ = site("/api/notes", "POST", {"text": "written by the kit on production"})
+        check("STORAGE: the kit's /notes route saves through class_storage on the platform", s == 201, (s, b))
+        s, b, _ = site("/api/notes")
+        check("STORAGE: and lists it back", s == 200 and any(n["text"] == "written by the kit on production" for n in b.get("notes", [])), (s, b))
+
+        # files: the presigned POST goes to REAL S3, so this is the part the local tests cannot show
+        payload = b"live storage file " * 20
+        s, up = sapi("POST", "/v1/files/upload-url", {"name": "live.txt", "size": len(payload), "content_type": "text/plain"})
+        check("STORAGE: an upload target is issued", s == 200 and up["url"].startswith("https://") and up["fields"]["key"] == f"userdata/{SLUG}/live.txt", (s, up))
+        boundary = secrets.token_hex(8)
+        body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in up["fields"].items())
+        body += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="live.txt"\r\nContent-Type: text/plain\r\n\r\n'.encode() + payload + f"\r\n--{boundary}--\r\n".encode()
+        ps, pb, ph = http("POST", up["url"], raw=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": "https://zz-backendtest.margdarshakss.com"})
+        check("STORAGE: the file is accepted by S3 (the signed form works)", ps in (200, 201, 204), (ps, str(pb)[:200]))
+        check("STORAGE: S3 sends the CORS header a browser needs for the upload", ph.get("Access-Control-Allow-Origin", ph.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.margdarshakss.com"), ph)
+        too_big = payload + b"1"
+        bad = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in up["fields"].items())
+        bad += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="live.txt"\r\nContent-Type: text/plain\r\n\r\n'.encode() + too_big + f"\r\n--{boundary}--\r\n".encode()
+        bs, _, _ = http("POST", up["url"], raw=bad, headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+        check("STORAGE: S3 itself refuses a file bigger than the size the form was issued for", bs == 400, bs)
+        s, b = sapi("GET", "/v1/files")
+        check("STORAGE: the file is listed with its size", s == 200 and [(f["name"], f["size"]) for f in b["files"]] == [("live.txt", len(payload))], (s, b))
+        s, b = sapi("GET", "/v1/files/live.txt")
+        ds, content, dh = http("GET", b["url"], headers={"Origin": "https://zz-backendtest.margdarshakss.com"}) if s == 200 else (0, "", {})
+        check("STORAGE: the download link returns the same bytes", ds == 200 and content == payload.decode(), (ds, str(content)[:60]))
+        check("STORAGE: the download link has CORS too (fetch from the page works)", dh.get("Access-Control-Allow-Origin", dh.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.margdarshakss.com"), dh)
+        s, b = sapi("POST", "/v1/files/upload-url", {"name": "huge.bin", "size": 2 * 1024 * 1024})
+        check("STORAGE: the 1 MB file space cap is enforced", s == 413 and b["error"] == "quota_exceeded", (s, b))
+        check("STORAGE: delete removes the file", sapi("DELETE", "/v1/files/live.txt")[0] == 200 and sapi("GET", "/v1/files")[1]["files"] == [])
+        check("STORAGE: the site's own address never serves userdata/", site(f"/userdata/{SLUG}/live.txt")[0] in (403, 404))
+
+        view = api("GET", "/api/student/storage", session=session)[1]
+        check("STORAGE: the student's view shows usage without any key", view["token"]["storage"]["usage"]["items"] >= 3 and "cs_" not in json.dumps(view), view["token"]["storage"])
+        item = storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"enabled": False}, ai_now())
+        check("STORAGE: switching off stops the API at once", sapi("GET", "/v1/data/live/a")[0] == 403)
+        cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
+        check("STORAGE: switching off removes the variables from the function", "CLASS_STORAGE_KEY" not in (cfg.get("Environment") or {}).get("Variables", {}))
+        storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"enabled": True}, ai_now())
+        check("STORAGE: switching on again brings the same data back", sapi("GET", "/v1/data/live/a")[1].get("value") == {"hello": "world", "n": [1, 2]})
+        storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"ops_limit": 0}, ai_now())
+        check("STORAGE: an allowance of 0 refuses with allowance_used", sapi("GET", "/v1/data/live/a")[1].get("error") == "allowance_used")
 finally:
     cleanup()
     leftover_functions = [f["FunctionName"] for f in lam.list_functions()["Functions"] if f["FunctionName"] == f"sd-{SLUG}"]

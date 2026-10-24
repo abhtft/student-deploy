@@ -89,6 +89,8 @@ Honest limits to tell students: there is no SQL; two writers at the same moment 
 
 ## 6. Turning it on (owner)
 
+> **Status:** deployed to production on 2026-10-24 and verified live (`python tests/live_smoke.py`, section J: key isolation, data, quotas, a real presigned upload and download through S3 with its CORS headers, S3 refusing an oversized file, the off switch). The steps below are how it was done and how to repeat it on another stack.
+
 ```bash
 sam build
 sam deploy --parameter-overrides <your existing overrides> StorageEnabled="true"

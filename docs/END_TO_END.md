@@ -325,6 +325,8 @@ The bucket name is the physical id of `SitesBucket` in the stack. Pages already 
 
 ### 4.5d Class storage setup (once)
 
+Done on production on 2026-10-24 (`StorageEnabled="true"` is in `samconfig.toml`); the steps below are how, and how to repeat it.
+
 1. Run the safe deploy routine with the extra parameter `StorageEnabled="true"` (add it to `parameter_overrides` in `samconfig.toml` when you are happy). Read the change set first: it should create `StudentDataTable`, `StorageApi`, `StorageFunction` and, with alerts, `StorageErrorsAlarm`, add a CORS rule on the bucket, and change `DeployFunction` only by adding `STORAGE_URL`. Nothing existing should be replaced.
 2. `node admin.mjs portal-publish` (the kit then contains the helpers; the pages already tolerate a server without storage).
 3. Teacher page: **Storage: on** for one test student, deploy the kit's sample backend as that student and call its `/notes` route. Check an upload and a download link once, because presigned file transfer is the one part the local tests cannot exercise.

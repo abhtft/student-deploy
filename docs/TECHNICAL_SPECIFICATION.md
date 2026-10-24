@@ -13,7 +13,7 @@
 | Student kit | version `1.4.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
-| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** built (section 4.14), off by default and **not yet deployed to production**. Kit 1.4.0 and the updated portal pages are published; the server side of storage is not. Local suite is now 33 steps. Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
+| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** (section 4.14) **deployed to production** on 2026-10-24 (`StorageEnabled="true"`, change set reviewed first: seven resources added, the rest modified in place, nothing replaced) and verified by 27 live checks (section J of `tests/live_smoke.py`); it is off for every student until the teacher switches it on. Kit 1.4.0 and the updated portal pages are published. Local suite is now 33 steps. Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
 
 ### How to read this document
@@ -73,7 +73,7 @@ SQL or server databases for students (RDS), server-side rendering, long-running 
 | F12 | Operations: alarms, versioning, backups | live | `test_template_ops.py`, live alarm test |
 | F13 | Portal user interface (teacher and student pages) | live | `test_web.mjs`, browser checks |
 | F15 | Student deploy from the computer without GitHub: `npm run login`, `npm run deploy`, and an MCP server for AI editors | **live** in kit 1.3.1 and later; the MCP server is tested by a protocol script, **not yet run inside VS Code or Antigravity by the owner** | `test_portal_cli.mjs`, `test_mcp.mjs`, `test_kit.mjs` |
-| F14 | Class storage connector (capped per-student data and files) | **built, not yet deployed** (needs `StorageEnabled=true`) | `test_storage.py`, `test_class_storage.*`, `test_kit_e2e.mjs`, `test_template_ops.py` |
+| F14 | Class storage connector (capped per-student data and files) | **live** (deployed 2026-10-24; off per student until the teacher switches it on) | `test_storage.py`, `test_class_storage.*`, `test_kit_e2e.mjs`, `test_template_ops.py` |
 
 ---
 
@@ -675,7 +675,7 @@ Static pages from `web/`, built with a tiny DOM helper that never parses text as
 
 ### 4.14 Class storage connector (F14)
 
-Teacher-controlled **data and file storage** for a student's backend, capped and metered. Full description for teachers and students: [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md). Added after the baseline of sections 11 and 12; it is **off unless `StorageEnabled=true`** and not yet deployed to production at the time of writing (section 12.3, item 4).
+Teacher-controlled **data and file storage** for a student's backend, capped and metered. Full description for teachers and students: [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md). Added after the baseline of sections 11 and 12; it is **off unless `StorageEnabled=true`**, which production has had since 2026-10-24 (section 12.3, item 12). Each student stays off until the teacher switches storage on.
 
 **Design decisions.** (1) *Isolation by construction, not by IAM:* all student functions share one sandbox role, and per-student IAM roles would give the portal's function the power to create roles and add a propagation delay to every deploy. Instead the student's function holds an **opaque key** (`cs_<slug>.<secret>`); the storage API works out the owner from the key and builds every DynamoDB key and S3 key itself, so a student cannot name another student's data. (2) *Own API and function* (`StorageApi` + `StorageFunction`, throttled separately) so a busy loop cannot slow the portal. (3) *Hard caps everywhere* so cost cannot run away: bytes, items, file space, file count, value size, and an operations allowance. (4) *Not SQL*: a collection is a list ordered by id; **no RDS** (always-on cost, private network, shared server).
 
@@ -809,7 +809,7 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 | `AiSecretName` | `openrouter` | `openrouter` | Secrets Manager secret with the management key |
 | `AiDefaultModel` | `anthropic/claude-haiku-5.5` | same | default model id |
 | `AiDefaultLimitUsd` | `0.25` | `0.25` | default per-student cap |
-| `StorageEnabled` | `false` | `false` (not yet deployed) | class storage connector: creates `StudentDataTable`, `StorageApi`, `StorageFunction` and the `storage-errors` alarm (needs `BackendEnabled`) |
+| `StorageEnabled` | `false` | `true` | class storage connector: creates `StudentDataTable`, `StorageApi`, `StorageFunction` and the `storage-errors` alarm (needs `BackendEnabled`) |
 
 ### 6.2 Lambda environment (set for every function through `Globals`)
 
@@ -988,7 +988,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 - Local suite: 33 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
-- Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks pass; the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
+- Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks passed at the baseline and 101 pass now (the 27 new ones are class storage, section J); the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
 
 ---
@@ -1026,15 +1026,15 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | 1 | **Re-tune capacity after the quota increase:** in-flight caps (3 and 2), `ConcurrencyAlarmThreshold` (8, to about 800) and per-student reserved concurrency were set for the old limit of 10 | open; do with a load test |
 | 2 | Publish the **public template repository** (`TEMPLATE_URL` in `web/github.js`) | waiting for the owner to create the empty repository |
 | 3 | **Deploy activity history** ("did my push go live?"); the checklist currently ticks "published" from the last deploy of any kind | planned |
-| 4 | A **capped per-student storage connector** (students need shared data; AI agents otherwise invent different external services) | **built** (section 4.14); deploy with `StorageEnabled=true`, then a live smoke test and a pilot |
+| 4 | A **capped per-student storage connector** (students need shared data; AI agents otherwise invent different external services) | **live** (section 4.14), deployed and live-tested 2026-10-24; a pilot is next |
 | 5 | **Pilot** with two or three real students | planned |
 | 6 | Alert when the OpenRouter credit balance runs low; teacher view of AI spend across students | planned |
 | 7 | "Rotate this student's key" button (manual runbook exists) | planned |
 | 8 | Custom-domain infrastructure into CloudFormation | known gap, documented |
 | 9 | Several teacher accounts; Content-Security-Policy; "Request more runs" from the student | backlog |
 | 10 | Whether each AI editor actually loads the rule files (agents in the evaluation were told to read `AGENTS.md`) | not verified |
-| 12 | **Deploy the storage connector** (`StorageEnabled=true`), run a live smoke test of presigned file upload and the API throttle, decide whether the data table needs point-in-time recovery, then pilot | open; owner approval needed for the AWS deploy |
-| 13 | **Real-editor check of the MCP server** in VS Code and Antigravity (tested only by a protocol script); VS Code now prefers `.mcp.json` over `.vscode/mcp.json`, so the kit may need to ship `.mcp.json` | open |
+| 12 | Class storage: **deployed and live-tested** (27 live checks, including the presigned upload to real S3, S3's own size refusal, CORS headers and the off switch). Still open: the API throttle was not load-tested; decide whether the data table needs point-in-time recovery; pilot with real students | partly done |
+| 13 | MCP server in real editors: **VS Code confirmed by the owner** (after the one-click *Migrate* that newer versions offer, which rewrites `.vscode/mcp.json` to `.mcp.json` with absolute paths and `"type": "local"`; the kit keeps shipping `.vscode/mcp.json` because a portable `.mcp.json` would need `${workspaceFolder}` to be expanded, which is unconfirmed). Antigravity still not checked | partly verified |
 | 14 | **Re-run the AI evaluation** against the kit 1.2 to 1.4 rules (Deploying, class storage) | open |
 | 15 | `platform update` cannot add new `package.json` scripts (the file is the student's); older projects need them added by hand or a fresh kit | known gap |
 | 11 | The kit's GitHub workflow has run on a real runner in the owner's test; a wider pilot will show real-world friction | partly verified |
@@ -1087,7 +1087,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   },
   "apiThrottles": { "BackendApi": { "rate": 10, "burst": 20 }, "DeployApi": { "rate": 20, "burst": 50 }, "StorageApi": { "rate": 20, "burst": 40 } },
   "templateParameterDefaults": { "BackendEnabled": "false", "AiEnabled": "false", "StorageEnabled": "false", "OfflineGraceDays": "3", "ConcurrencyAlarmThreshold": "8", "AiDefaultLimitUsd": "0.25", "AiDefaultModel": "anthropic/claude-haiku-5.5", "AiSecretName": "openrouter" },
-  "deployedParameters": { "BackendEnabled": "true", "AiEnabled": "true", "PortalAlias": "true" },
+  "deployedParameters": { "BackendEnabled": "true", "AiEnabled": "true", "StorageEnabled": "true", "PortalAlias": "true" },
   "sweeperCron": "cron(0 3 * * ? *)",
   "s3Lifecycle": { "uploadsExpireDays": 1, "noncurrentVersionDays": 30 },
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
