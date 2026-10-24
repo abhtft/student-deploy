@@ -13,6 +13,7 @@ Teacher (password -> signed session, 8 h):
   POST /api/admin/tokens/{id}/domain-access   {enabled}   switch custom domains on/off for a student
   POST /api/admin/tokens/{id}/backend    {enabled?, runs_limit?, runs_period?}   backend on/off and run allowance
   POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?}   class AI connector (ai.py); {} refreshes usage
+  POST /api/admin/tokens/{id}/storage    {enabled?, data_mb?, files_mb?, ops_limit?, ops_period?}   class storage connector (storage.py)
 
 Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/login                {token}
@@ -23,6 +24,7 @@ Student (the token itself is the login -> signed session, 12 h):
   GET/DELETE /api/student/backend, POST .../backend/upload-url|publish, PUT .../backend/env, DELETE .../backend/env/<NAME>,
   GET .../backend/logs                                              student backend (see backends.py; runs behind gateway.py)
   GET  /api/student/ai                   refresh the AI usage numbers (ai.py)
+  GET  /api/student/storage              storage usage including the file count and size (storage.py)
 
 A token is active until expires_at, "expired" (read-only) for GRACE_DAYS, then "offline".
 Only a SHA-256 of each token is stored. Teacher and student sessions use different signing keys.
@@ -313,6 +315,7 @@ def view(item, now, site_url):
         "custom_domain": domain_view(item),
         "backend": backend_view(item, now),
         "ai": ai_view(item, now),
+        "storage": storage_view(item, now),
     }
 
 
@@ -324,6 +327,11 @@ def backend_view(item, now):
 def ai_view(item, now):
     import ai
     return ai.view(item, now)
+
+
+def storage_view(item, now):
+    import storage
+    return storage.view(item, now)
 
 
 DOMAIN_MESSAGES = {
@@ -432,6 +440,11 @@ def dispatch(method, path, body, event, now, site_url):
     if (method, path) == ("GET", "/api/student/ai"):
         import ai
         return reply(200, token=view(ai.refresh_usage(student_token(event, now), now), now, site_url))
+    if (method, path) == ("GET", "/api/student/storage"):
+        import storage
+        item = student_token(event, now)
+        files = storage.files_usage(item) if storage.available() and storage.settings(item).get("enabled") else None
+        return reply(200, token=view(item, now, site_url), files=files)
     if path in ("/api/student/domain", "/api/student/domain/status") and method in ("PUT", "DELETE", "GET"):
         import domains
         item = student_token(event, now)
@@ -465,6 +478,11 @@ def dispatch(method, path, body, event, now, site_url):
         if method == "POST" and ai_route:
             import ai
             item = ai.set_ai(get_token(ai_route.group(1)), body, now)
+            return reply(200, token=view(item, now, site_url))
+        storage_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/storage", path)
+        if method == "POST" and storage_route:
+            import storage
+            item = storage.set_storage(get_token(storage_route.group(1)), body, now)
             return reply(200, token=view(item, now, site_url))
         access = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/domain-access", path)
         if method == "POST" and access:

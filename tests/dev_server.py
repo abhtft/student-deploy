@@ -18,7 +18,8 @@ os.environ.update(AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", AWS_AC
                   BUCKET="b", DISTRIBUTION_ID="E1", DISTRIBUTION_DOMAIN="d123.cloudfront.net", ROOT_DOMAIN="margdarshakss.com",
                   KEYS_PARAM="/k", TENANT_DISTRIBUTION_ID="EMT", ROUTING_ENDPOINT="route.cloudfront.net",
                   BACKEND_ENABLED="true", SANDBOX_ROLE_ARN="arn:aws:iam::1:role/sandbox", ORIGIN_SECRET="dev-origin-secret", GATEWAY_CACHE_SECONDS="0",
-                  AI_ENABLED="true", AI_SECRET_NAME="openrouter", AI_DEFAULT_MODEL="anthropic/claude-haiku-5.5", AI_DEFAULT_LIMIT_USD="0.25")
+                  AI_ENABLED="true", AI_SECRET_NAME="openrouter", AI_DEFAULT_MODEL="anthropic/claude-haiku-5.5", AI_DEFAULT_LIMIT_USD="0.25",
+                  STORAGE_ENABLED="true", STORAGE_URL=f"http://127.0.0.1:{port}/storage")
 sys.path[:0] = [os.path.join(here, "..", "lambda"), here]
 import app  # noqa: E402
 import backends  # noqa: E402
@@ -26,6 +27,7 @@ import domains  # noqa: E402
 import gateway  # noqa: E402
 import openrouter  # noqa: E402
 import portal  # noqa: E402
+import storage_api  # noqa: E402
 from fakes import FakeLambda, FakeLogs, FakeOpenRouter, FakeS3, FakeSSM, FakeTenantCloudFront, store  # noqa: E402
 
 WEB = os.path.join(here, "..", "web")
@@ -141,6 +143,35 @@ class Handler(BaseHTTPRequestHandler):
         result = app.handler(event, None)
         self.send(result["statusCode"], result["body"].encode())
 
+    def storage(self, method):
+        """What API Gateway does for the class storage API: pass the request to storage_api.handler (path below /storage)."""
+        length = int(self.headers.get("content-length") or 0)
+        path, _, query = self.path.partition("?")
+        params = dict(part.split("=", 1) for part in query.split("&") if "=" in part)
+        event = {"rawPath": path[len("/storage"):] or "/", "queryStringParameters": params or None,
+                 "body": self.rfile.read(length).decode() if length else None,
+                 "requestContext": {"http": {"method": method, "sourceIp": self.client_address[0]}},
+                 "headers": {k.lower(): v for k, v in self.headers.items()}}
+        result = storage_api.handler(event, None)
+        self.send(result["statusCode"], result["body"].encode())
+
+    def s3_post(self):
+        """The fake presigned POST target: reads the multipart form and keeps the file under its 'key' field."""
+        from email.parser import BytesParser
+        from email.policy import default
+        length = int(self.headers.get("content-length") or 0)
+        raw = self.rfile.read(length)
+        message = BytesParser(policy=default).parsebytes(b"Content-Type: " + self.headers["content-type"].encode() + b"\r\n\r\n" + raw)
+        fields, content = {}, b""
+        for part in message.iter_parts():
+            name = part.get_param("name", header="content-disposition")
+            if part.get_filename() is not None or name == "file":
+                content = part.get_payload(decode=True)
+            else:
+                fields[name] = part.get_content()
+        store[fields["key"]] = {"Body": content}
+        self.send(204, b"", "text/plain")
+
     def gateway(self, method):
         """What CloudFront + API Gateway do in production: add the origin secret and the viewer IP, then call the gateway."""
         length = int(self.headers.get("content-length") or 0)
@@ -158,6 +189,10 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_POST(self):
+        if self.path.startswith("/storage/"):
+            return self.storage("POST")
+        if self.path == "/s3-post":
+            return self.s3_post()
         if self.path.startswith("/b/"):
             return self.gateway("POST")
         self.api("POST")
@@ -170,11 +205,15 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_DELETE(self):
+        if self.path.startswith("/storage/"):
+            return self.storage("DELETE")
         if self.path.startswith("/b/"):
             return self.gateway("DELETE")
         self.api("DELETE")
 
     def do_PUT(self):
+        if self.path.startswith("/storage/"):
+            return self.storage("PUT")
         if self.path.startswith("/b/"):
             return self.gateway("PUT")
         if self.path.startswith("/api/"):
@@ -191,6 +230,11 @@ class Handler(BaseHTTPRequestHandler):
             if key:
                 dev_router.spend(key["hash"], float(query.get("usd", "0.01")))
             return self.send(200, json.dumps({"ok": bool(key), "usage": key and key["usage"]}).encode())
+        if self.path.startswith("/storage/"):
+            return self.storage("GET")
+        if self.path.startswith("/s3/"):  # the fake presigned download link
+            found = store.get(self.path[len("/s3/"):].split("?")[0])
+            return self.send(200, found["Body"], "application/octet-stream") if found else self.send(404, b"", "text/plain")
         if self.path.startswith("/b/"):
             return self.gateway("GET")
         if self.path.startswith("/api/"):

@@ -13,6 +13,7 @@
 //
 // Run it on your computer with `npm run dev` (or `npm run dev -- --backend-only`).
 import { AiError, ask } from './class_ai.mjs'; // the platform's helper for the class AI: two lines are all you need
+import * as storage from './class_storage.mjs'; // the platform's helper for saving data (needs the teacher to switch class storage on)
 
 const json = (statusCode, data) => ({ statusCode, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
 
@@ -49,6 +50,20 @@ export const handler = async (event) => {
       return json(200, { answer });
     } catch (error) {
       if (error instanceof AiError) return json(503, { error: error.kind, message: error.message });
+      throw error;
+    }
+  }
+
+  if (path === '/notes' && (method === 'GET' || method === 'POST')) {
+    try {
+      if (method === 'GET') return json(200, { notes: (await storage.items('notes')).map((row) => row.value).slice(-20) }); // ids start with the time: oldest first
+      const text = String(readJson(event).text ?? '').trim();
+      if (!text || text.length > 200) return json(400, { error: 'bad_request', message: 'Send a note of 1 to 200 characters.' });
+      const note = { id: String(Date.now()).padStart(13, '0'), text };
+      await storage.put('notes', note.id, note); // THE storage call: collection, id, any JSON
+      return json(201, note);
+    } catch (error) {
+      if (error instanceof storage.StorageError) return json(503, { error: error.kind, message: error.message }); // not switched on, full, allowance used...
       throw error;
     }
   }

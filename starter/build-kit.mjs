@@ -4,6 +4,7 @@
 // The kit = starter/template/ (the project skeleton)
 //         + student/portal-deploy.mjs                -> portal-deploy.mjs            (single source: the same CLI the portal offers)
 //         + student/class_ai.py / class_ai.mjs       -> backend/class_ai.py, variants/node-backend/class_ai.mjs
+//         + student/class_storage.py / .mjs          -> backend/class_storage.py, variants/node-backend/class_storage.mjs
 //         + starter/rules/AGENTS.md                  -> the rules, under the file names each AI editor reads (identical content)
 //         + kit-manifest.json                        -> sha256 of every file, for `update` and integrity checks
 //
@@ -55,6 +56,8 @@ export function buildKit(out, { force = false } = {}) {
   copy('student/portal-deploy.mjs', 'portal-deploy.mjs');
   copy('student/class_ai.py', 'backend/class_ai.py');
   copy('student/class_ai.mjs', 'variants/node-backend/class_ai.mjs');
+  copy('student/class_storage.py', 'backend/class_storage.py');
+  copy('student/class_storage.mjs', 'variants/node-backend/class_storage.mjs');
   mkdirSync(join(out, 'tools'), { recursive: true });
   cpSync(join(here, 'zip.mjs'), join(out, 'tools', 'zip.mjs')); // `platform update` reads the kit zip with it
 

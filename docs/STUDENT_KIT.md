@@ -40,7 +40,7 @@ AGENTS.md                      the platform's rules for the AI (canonical)
 GEMINI.md  CLAUDE.md           copies / import for Gemini CLI + Antigravity and Claude Code
 .claude/skills/class-platform  .cursor/rules/  .github/copilot-instructions.md  .windsurfrules   the same rules for other editors
 frontend/                      working React + Vite + TypeScript site (calls /api, asks the AI through the backend)
-backend/app.py  class_ai.py    working Python function and the class AI helper
+backend/app.py  class_ai.py  class_storage.py    working Python function, the class AI helper and the class storage helper
 variants/node-backend/         the same backend in Node 22
 tools/                         check.mjs (platform check), dev.mjs + dev servers (local run), doctor.mjs
 .github/workflows/deploy.yml   check, then deploy on every push to main
@@ -48,7 +48,7 @@ portal-deploy.mjs              the CLI the workflow runs (the same file the port
 platform.json  kit-manifest.json   kit version and sha256 of every file
 ```
 
-Two files are **single-source** (copied from the platform repo at build time, never edited in the template): `portal-deploy.mjs` and `class_ai.py` / `class_ai.mjs`. A test asserts the kit copies are byte-identical to the platform's.
+Two files are **single-source** (copied from the platform repo at build time, never edited in the template): `portal-deploy.mjs`, `class_ai.py` / `class_ai.mjs` and `class_storage.py` / `class_storage.mjs`. A test asserts the kit copies are byte-identical to the platform's.
 
 ## 3. How the architecture is enforced (four layers)
 
@@ -89,6 +89,10 @@ Mentions in comments and placeholders like `mds_xxxxxxxx` do not trigger errors 
 
 `npm run dev` starts the site (http://localhost:3000) and the backend (http://127.0.0.1:8788); the site forwards `/api` to it, so the browser sees one address exactly like on the platform. Both backends (Python and Node) reload changed files without a restart. **The class AI is an offline mock locally** (answers start with `[mock AI]`), so students iterate without spending their allowance; setting their own `OPENAI_*` variables in `.env.local` uses a real model. `npm run doctor` checks Node 22, Python 3.12 and git.
 
+## 4b. The class storage helper (`class_storage`)
+
+For data that must survive a refresh or be shared between visitors, and for uploaded files. Python: `import class_storage as storage`, then `storage.put("scores", "alice", {...})`, `storage.get(...)`, `storage.items("scores")`, `storage.delete(...)`, and `storage.files.put/list/url/delete/upload_url`; Node: `import * as storage from './class_storage.mjs'` with `put`, `get`, `items`, `del` and `files.*`. The kit's sample backend has a `/notes` route that shows it. On the platform it works only after the teacher switches storage on (the portal's Backend card then shows the limits and usage); on the student's computer (`npm run dev`) it keeps everything in the git-ignored `.class-storage/` folder with the same rules, so building never needs a connection. Errors are `StorageError` with a kind (`not_enabled`, `allowance_used`, `quota_exceeded`, `too_large`, `token_inactive`, `bad_request`, `unavailable`, `bad_key`). It is **not SQL**: records are listed by id. Everything about the connector (caps, cost, isolation): [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md).
+
 ## 5. The class AI helper (`class_ai`)
 
 Two lines in the student's backend: `from class_ai import ask` / `answer = ask("...")` (Node: `import { ask } from './class_ai.mjs'` / `await ask('...')`). It reads the three variables the platform sets when the teacher switches the AI on, and raises `AiError` with a friendly message and a kind (`not_enabled`, `cap_reached`, `disabled`, `busy`, `timeout`, `provider_error`); `default="..."` returns a fallback text instead. It retries once on 429/5xx, uses a 20 s timeout, never prints or logs the key or prompts, and is tested in both languages against a local fake service. Details of the connector itself: [AI_CONNECTOR.md](AI_CONNECTOR.md).
@@ -119,6 +123,7 @@ Two lines in the student's backend: `from class_ai import ask` / `answer = ask("
 | Test | What it proves |
 |---|---|
 | `tests/test_class_ai.py`, `test_class_ai.mjs` | the helper in both languages: success, every error kind, retries, timeout, mock, `default=`, no key or prompt in any output |
+| `tests/test_class_storage.py`, `test_class_storage.mjs` | the storage helper in both languages against the real storage API: data, files (multipart, file last), every error kind, the local folder, no key in any error |
 | `tests/test_kit.mjs` | kit contents; all rule copies identical; single-source files identical; no secrets or personal data; limits equal the platform's; each checker rule fires on a deliberate mistake (about 30 fixtures) and stays quiet on comments and placeholders; both dev servers run with hot reload and the AI mock |
 | `tests/test_kit_update.mjs` | `platform status` and `update` against the dev portal: current projects, older kits (dry run writes nothing, `--apply` updates only managed files, student code untouched), edited files protected, deleted files restored; hostile portals (wrong hash, unsafe path, extra files) |
 | `tests/test_kit_e2e.mjs` | build the kit, `npm ci`, deploy it with its own `portal-deploy.mjs` to the whole dev portal, switch the AI on as the teacher: `ask()` reaches the model with the student's own key; switch off gives a friendly `not_enabled`; the Node variant works too (needs network for npm) |

@@ -13,6 +13,9 @@ __pycache__/
 !.env.example
 *.local
 
+# the local stand-in for class storage (npm run dev)
+.class-storage/
+
 # editor and OS files
 .DS_Store
 Thumbs.db

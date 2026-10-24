@@ -12,12 +12,13 @@ rules. Follow them exactly: the app is checked by `npm run check` before every d
 | Backend | **One function** in `backend/`: Python 3.12 (`app.py`) **or** Node 22 (`index.mjs`). No server process, no framework that listens on a port. |
 | Address | The site is `https://<name>.margdarshakss.com`. The backend is reached at **`/api/...` on the same address** (the `/api` prefix is removed before your function sees the path). No CORS needed. |
 | Class AI | The teacher can switch on an AI key for the student's backend. The helper `class_ai` makes the call in one line. |
+| Class storage | The teacher can switch on a small database and file area for the student's backend. The helper `class_storage` saves and reads data in one line. |
 | Deploy | Two ways, same result. **From the computer:** `npm run login` once, then `npm run deploy` (no GitHub needed). **From GitHub:** push to `main` and a GitHub Action runs `npm run check`, then deploys. |
 
 **Does not work here** (tutorials often assume these, so say so plainly if the student asks): Express, Flask, Django, FastAPI or any server
 that listens on a port; MongoDB, MySQL, PostgreSQL or any database server; Firebase Admin; Next.js server apps and server-side rendering;
 websockets; cron jobs; background workers; installing packages on the platform. Offer the closest thing that does work (a function
-route, `localStorage`, or an external HTTP service called from the backend: see "Where data lives").
+route, `localStorage`, class storage (`class_storage`) or an external HTTP service called from the backend: see "Where data lives").
 
 ## Golden rules
 
@@ -35,7 +36,7 @@ route, `localStorage`, or an external HTTP service called from the backend: see 
 6. **Backend limits:** 10 seconds per request (25 s while the class AI is on), 256 MB, request and response at most 1 MB, the backend folder at most 500 files and 5 MB zipped. Keep text answers short (`max_tokens` 200-400); lists or JSON may need up to 800.
 7. **Secrets:** a backend secret (a database URL, another service's key) is set by the student in the portal (Backend card > Environment variables) and read with `os.environ["NAME"]` / `process.env.NAME`. Never write a secret into any file, never create `.env` inside `backend/`. For local runs only, `.env.local` at the project root is allowed (it is git-ignored).
 8. **The portal token lives in exactly two places:** the GitHub repository secret `PORTAL_TOKEN`, and `.env.local` (git-ignored), which only `npm run login` writes. Never write it into any other file, never print it, **never open or read `.env.local`**, and never ask the student to paste it to you. **If the student pastes a real key or token into the chat, do not use it and do not store it anywhere**; tell them to revoke or regenerate it (an AI key at its provider, the portal token via the teacher) and explain where such a value belongs.
-9. **One backend language.** `app.py` **or** `index.mjs`, not both. To switch to Node: delete `backend/app.py` and `backend/class_ai.py`, then move the files from `variants/node-backend/` into `backend/` (and delete the `variants/` folder).
+9. **One backend language.** `app.py` **or** `index.mjs`, not both. To switch to Node: delete `backend/app.py`, `backend/class_ai.py` and `backend/class_storage.py`, then move the files from `variants/node-backend/` into `backend/` (and delete the `variants/` folder).
 10. **Do not edit** `.github/workflows/deploy.yml`, `portal-deploy.mjs`, `tools/` or `platform.json` unless the student's teacher asked for it.
 
 ## Backend pattern (Python)
@@ -88,12 +89,21 @@ Put every backend call in `frontend/src/api.ts` (`api('/ask', { method: 'POST', 
 
 ## Where data lives
 
-There is **no database**. Choose the simplest option and **tell the student its limits**:
+Choose the simplest option that fits and **tell the student its limits**:
 - `localStorage` in the browser: free and simple, but the data stays in that browser on that device (clearing site data deletes it). Say this in plain words, and in the app where it matters.
-- **Data shared between visitors** (a leaderboard, a guestbook, shared notes) needs an external service with an HTTP interface, called from the backend with `urllib.request` / `fetch`. The **student** must create that account and set its URL and key as portal environment variables; you must not create accounts, invent credentials or write them into code. Use these names so every project looks the same: `STORE_URL` and `STORE_KEY`, and add them as commented lines to `.env.example`. Unless the teacher names another service, use a free **Supabase** project's REST interface (PostgREST): create a table in its dashboard, then
+- **Class storage** (`class_storage`) when data must survive a refresh or be shared between visitors (a leaderboard, a guestbook, shared notes, uploaded images). The teacher switches it on per student (the portal's Backend card then shows a "Class storage" section); `npm run dev` always works, it keeps a local copy in `.class-storage/`.
+  Python: `import class_storage as storage`, then `storage.put("scores", "alice", {"points": 3})`, `storage.get("scores", "alice", default=None)`, `storage.items("scores")`, `storage.delete("scores", "alice")`.
+  Node: `import * as storage from './class_storage.mjs'`, then `await storage.put(...)`, `await storage.get(..., null)`, `await storage.items(...)`, `await storage.del(...)`.
+  Files (up to 5 MB each): `storage.files.put(name, bytes, content_type)`, `storage.files.list()`, `storage.files.url(name)` (a 5-minute download link, fine for `<img src>`), `storage.files.delete(name)`. For uploads from the page, keep the 1 MB request limit in mind: the backend returns `storage.files.upload_url(name, size, type)` and the browser POSTs a multipart form to it (every field in `fields`, the file last).
+  - A call that fails raises/throws `StorageError` (`.kind`, `.status`, a friendly `.message`): return HTTP 503 `{"error": kind, "message": message}` and let the page show the message. `not_enabled` means the teacher has not switched it on: tell the student to ask their teacher; do not work around it with another service.
+  - It is **not SQL**. A collection is a list of records ordered by `id` (up to 100 per page, pass `after=`), with no search or sorting by other fields. Design ids for that (for example a zero-padded counter or a date prefix such as `2026-10-24T10-15-00-ab12`). Collections are lowercase letters, digits, `-`, `_` (up to 40); ids are letters, digits, `.`, `-`, `_` (up to 128); a value is JSON up to 64 KB; file names have no folders.
+  - Every read, write and file call counts against an operations allowance, and the database and file space are capped: never call it in a loop, read a collection once with `items`, keep records small.
+  - Two writers at the same moment overwrite each other (the last one wins). There are no logins here, so every visitor can call your routes: validate the input, never store secrets or other people's personal data, and do not promise per-user privacy.
+  - **Do not edit `class_storage.py` / `class_storage.mjs`** (they are refreshed with the kit) and do not read or print `CLASS_STORAGE_KEY`.
+- **Anything SQL-shaped, or when class storage is not available:** an external service with an HTTP interface, called from the backend with `urllib.request` / `fetch`. The **student** must create that account and set its URL and key as portal environment variables; you must not create accounts, invent credentials or write them into code. Use these names so every project looks the same: `STORE_URL` and `STORE_KEY`, and add them as commented lines to `.env.example`. Unless the teacher names another service, use a free **Supabase** project's REST interface (PostgREST): create a table in its dashboard, then
   `GET  {STORE_URL}/rest/v1/<table>?select=*&order=created_at.desc&limit=10` and `POST {STORE_URL}/rest/v1/<table>` with a JSON body, sending the headers `apikey: <STORE_KEY>` and `Authorization: Bearer <STORE_KEY>` (use the "anon" key with row-level security enabled so visitors cannot read or change anything you did not allow).
   Make the app still work, in a clearly labelled "practice mode" (data kept in memory, say that it is lost and not shared), when the variables are missing. Keep every storage call to 8 seconds or less and answer `502 storage_error` when it fails. Explain the limits honestly: free tiers have quotas, anyone can post fake data unless you validate it, two writers at the same moment can overwrite each other, and the data is not live (refresh to see new entries).
-- If this is not enough, tell the student to ask their teacher; do not pretend the platform has storage it does not have.
+- **There is no database server** (no MySQL, PostgreSQL, MongoDB, RDS): do not pretend there is. If none of the above is enough, tell the student to ask their teacher.
 
 ## Commands the student (or you) can run
 

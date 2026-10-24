@@ -96,6 +96,22 @@ check("ai.studentTimeoutSeconds (template)", str(a["studentTimeoutSeconds"]), re
 check("ai.defaultModel (ai.py)", a["defaultModel"], re.search(r'AI_DEFAULT_MODEL", "([^"]+)"', ai).group(1))
 check("ai.envNames", a["envNames"], re.findall(r'"([A-Z_]+)"', re.search(r"^AI_ENV_NAMES = \((.*?)\)", ai, re.M).group(1)))
 
+st = facts["storage"]
+storage_src = read("lambda/storage.py")
+check("storage.maxValueKB", st["maxValueKB"], const(storage_src, "MAX_VALUE_BYTES") // 1024)
+check("storage.maxItems", st["maxItems"], const(storage_src, "MAX_ITEMS"))
+check("storage.maxFileMB", st["maxFileMB"], int(re.search(r"^MAX_FILE_BYTES = (\d+) \* MB", storage_src, re.M).group(1)))
+check("storage.maxFiles", st["maxFiles"], const(storage_src, "MAX_FILES"))
+defaults = lambda name: tuple(int(x.strip().replace("_", "")) for x in re.search(rf"^{name} = ([\d_, ]+)", storage_src, re.M).group(1).split(","))  # noqa: E731
+check("storage.defaultDataMB", st["defaultDataMB"], defaults("DEFAULT_DATA_MB, MAX_DATA_MB")[0])
+check("storage.maxDataMB", st["maxDataMB"], defaults("DEFAULT_DATA_MB, MAX_DATA_MB")[1])
+check("storage.defaultFilesMB", st["defaultFilesMB"], defaults("DEFAULT_FILES_MB, MAX_FILES_MB")[0])
+check("storage.maxFilesMB", st["maxFilesMB"], defaults("DEFAULT_FILES_MB, MAX_FILES_MB")[1])
+check("storage.defaultOps", st["defaultOps"], defaults("DEFAULT_OPS, MAX_OPS")[0])
+check("storage.defaultPeriod", st["defaultPeriod"], re.search(r'^DEFAULT_PERIOD = "(\w+)"', storage_src, re.M).group(1))
+check("storage.listPageItems", st["listPageItems"], defaults("LIST_PAGE_ITEMS, LIST_PAGE_BYTES")[0])
+check("storage.envNames", st["envNames"], re.findall(r'"([A-Z_]+)"', re.search(r"^ENV_NAMES = \((.*?)\)", storage_src, re.M).group(1)))
+
 
 # ---- template ----
 def block_of(name):

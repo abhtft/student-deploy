@@ -70,7 +70,7 @@ ${out}`);
   assert.equal((await aiOn(true)).status, 200);
   const first = deploy(kit);
   assert.equal(first.status, 0, first.stdout + first.stderr);
-  assert.match(first.stdout, /Backend: packed 2 files from backend\//);
+  assert.match(first.stdout, /Backend: packed 3 files from backend\//);
   assert.match(first.stdout, /Backend ready \(python3\.12\)/);
   assert.match(first.stdout, /Frontend: packed \d+ files from frontend[\\/]dist\//);
   assert.match(first.stdout, /Frontend live at https:\/\/alice\.margdarshakss\.com\//);
@@ -97,12 +97,31 @@ ${out}`);
   assert.equal(modelCalls.length, 1, 'no call reaches the model while the AI is off');
   say('Python: AI switched off -> a friendly not_enabled answer and no model call');
 
+  // ---- class storage: the teacher switches it on AFTER the function exists; the kit's /notes route saves and reads through the real storage API ----
+  const storageOn = (enabled) => post(`/api/admin/tokens/${aliceId}/storage`, { enabled }, teacher);
+  const notes = (method, body) => gateway('/notes', { method, ...(body ? { body: JSON.stringify(body) } : {}) });
+  const off0 = await notes('GET');
+  assert.equal(off0.status, 503);
+  assert.equal(off0.body.error, 'not_enabled', JSON.stringify(off0.body));
+  assert.equal((await storageOn(true)).status, 200);
+  assert.equal((await notes('POST', { text: 'first note' })).status, 201);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal((await notes('POST', { text: 'second note' })).status, 201);
+  assert.equal((await notes('POST', { text: '' })).status, 400);
+  assert.deepEqual((await notes('GET')).body.notes.map((n) => n.text), ['first note', 'second note']);
+  assert.equal((await storageOn(false)).status, 200);
+  assert.equal((await notes('GET')).body.error, 'not_enabled', 'switching storage off stops it at once');
+  assert.equal((await storageOn(true)).status, 200);
+  assert.equal((await notes('GET')).body.notes.length, 2, 'the data is kept while storage is off');
+  say('Python: the kit\'s /notes route saves and lists through class storage; off stops it, on brings the data back');
+
   // ---- Node variant: switch language as the rules describe, then deploy ----
   const nodeKit = join(work, 'node-kit');
   cpSync(kit, nodeKit, { recursive: true });
   const { rmSync: rm, cpSync: cp } = await import('node:fs');
   rm(join(nodeKit, 'backend', 'app.py'));
   rm(join(nodeKit, 'backend', 'class_ai.py'));
+  rm(join(nodeKit, 'backend', 'class_storage.py'));
   cp(join(nodeKit, 'variants', 'node-backend'), join(nodeKit, 'backend'), { recursive: true });
   rm(join(nodeKit, 'variants'), { recursive: true });
   const check = spawnSync(process.execPath, [join(nodeKit, 'tools', 'check.mjs')], { encoding: 'utf8' });
@@ -119,6 +138,11 @@ ${out}`);
   assert.equal(modelCalls.at(-1).body.messages.at(-1).content, 'Node please');
   assert.match(modelCalls.at(-1).auth, /^Bearer sk-or-v1-fake-/);
   say('Node variant: switched as the rules say, deploys, and ask("...") reaches the model too');
+
+  assert.equal((await storageOn(true)).status, 200);
+  assert.equal((await notes('POST', { text: 'from node' })).status, 201);
+  assert.deepEqual((await notes('GET')).body.notes.map((n) => n.text).slice(-1), ['from node']);
+  say('Node variant: the same /notes route works through class_storage.mjs');
 
   console.log('test_kit_e2e.mjs: all passed');
 } finally {

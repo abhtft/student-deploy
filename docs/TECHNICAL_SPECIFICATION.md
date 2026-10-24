@@ -10,7 +10,7 @@
 | Product | Class Hosting Platform: a controlled place where a teacher gives students expiring tokens, and students publish a website, a small backend and (optionally) an AI key, mostly by pushing to GitHub |
 | Code base | this repository, branch `feature/custom-domains-and-portal-hosting` (the release baseline is the commit that adds this document; `git log -1` shows it) |
 | Production | AWS account of the owner, region `us-east-1`, CloudFormation stack `student-hosting` (status `UPDATE_COMPLETE`), portal `https://deploy.margdarshakss.com`, student sites `https://<name>.margdarshakss.com` |
-| Student kit | version `1.3.1` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
+| Student kit | version `1.4.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
@@ -42,7 +42,7 @@ A teacher wants many students to publish real web projects (a site, a backend, A
 
 ### 1.3 Non-goals (not in Release 1.0)
 
-Databases or file storage for students, server-side rendering, long-running processes, websockets, several teacher accounts, student self-registration, billing, a hard model allow-list for AI, AI streaming, a deploy-activity history, key rotation by button, infrastructure for custom domains inside CloudFormation. Section 12.3 lists them with their status.
+SQL or server databases for students (RDS), server-side rendering, long-running processes, websockets, several teacher accounts, student self-registration, billing, a hard model allow-list for AI, AI streaming, a deploy-activity history, key rotation by button, infrastructure for custom domains inside CloudFormation. Section 12.3 lists them with their status.
 
 ### 1.4 Roles
 
@@ -71,6 +71,7 @@ Databases or file storage for students, server-side rendering, long-running proc
 | F11 | Student kit, checker, local dev tools, update command, AI helper | live | `test_kit*.mjs`, `test_class_ai.*`, live smoke section I, AI evaluation |
 | F12 | Operations: alarms, versioning, backups | live | `test_template_ops.py`, live alarm test |
 | F13 | Portal user interface (teacher and student pages) | live | `test_web.mjs`, browser checks |
+| F14 | Class storage connector (capped per-student data and files) | **built, not yet deployed** (needs `StorageEnabled=true`) | `test_storage.py`, `test_class_storage.*`, `test_kit_e2e.mjs`, `test_template_ops.py` |
 
 ---
 
@@ -174,7 +175,8 @@ flowchart TB
 | Daily job | `SweeperFunction` (`app.sweep`, 512 MB, 300 s) + `SweeperFunctionDaily` (cron 03:00 UTC) | archive expired sites, finish domain removals, sync AI keys |
 | Configuration | SSM parameters `StudentKeys`, `TeacherAccount`, `/student-deploy/alert-email` | legacy keys map, teacher account, alert address |
 | Secret | Secrets Manager `openrouter` (outside the stack) | the OpenRouter management key (JSON, `OPENROUTER_MANAGEMENT_KEY`) |
-| Alerts | `AlertsTopic`, `AlertsEmail`, six alarms | see section 11.2 |
+| Class storage | `StorageApi` + `StorageFunction` (`lambda/storage_api.py`, 256 MB, 10 s), `StudentDataTable` (all only with `StorageEnabled=true`) | the capped data and file connector (section 4.14) |
+| Alerts | `AlertsTopic`, `AlertsEmail`, six alarms (seven with storage) | see section 11.2 |
 
 ### 2.4 Code layout
 
@@ -268,6 +270,7 @@ Rules: counters change only through atomic conditional updates (`counter_add` / 
 | `uploads/` | temporary zips (`<slug>.zip`, `<slug>-backend.zip`) | deleted after 1 day, with their old versions |
 | `archive/<slug>/` | sites taken offline (moved, never deleted automatically) | kept; restorable |
 | `portal/` | the portal pages and downloads (written by `admin.mjs portal-publish`) | replaced on publish |
+| `userdata/<slug>/` | a student's files (class storage only; never served by CloudFront) | kept; old versions expire after 30 days; the bucket allows browser POST and GET only through presigned links |
 
 Versioning makes an overwritten or deleted file recoverable for 30 days (runbook in [END_TO_END.md section 4.5b](END_TO_END.md)). CloudFront reads only `sites/*` (and `portal/*` for the portal) through origin access control; the bucket blocks all public access.
 
@@ -659,9 +662,59 @@ Six CloudWatch alarms notify one SNS topic by email (address read from SSM at de
 
 Static pages from `web/`, built with a tiny DOM helper that never parses text as HTML; no build step.
 
-- **Teacher page** (`/teacher`): sign-in; tabs **Tokens** and **Requests** (with a badge); token creation (days, name, slug); per-token row with status pill, expiry bar, last deploy, custom-domain state and the buttons Domain on/off, Backend on/off, Runs..., +1,000, AI on/off, AI cap..., Extend, Take offline, Revoke; request review (Approve, Deny).
-- **Student page** (`/student`): sign-in with the token; status card (expiry bar, last upload, 3-day warning banner, regeneration request); **Upload your site** (drop a build folder or a zip, pre-upload checks, progress); **Custom domain** card (steps and polling); **Backend** card (upload, state, usage meter, environment variables, logs, **Class AI** section); **Start here** card (kit download, repository links, checklist, older downloads); upload guidelines.
+- **Teacher page** (`/teacher`): sign-in; tabs **Tokens** and **Requests** (with a badge); token creation (days, name, slug); per-token row with status pill, expiry bar, last deploy, custom-domain state and the buttons Domain on/off, Backend on/off, Runs..., +1,000, AI on/off, AI cap..., Storage on/off, Storage caps..., Extend, Take offline, Revoke; request review (Approve, Deny).
+- **Student page** (`/student`): sign-in with the token; status card (expiry bar, last upload, 3-day warning banner, regeneration request); **Upload your site** (drop a build folder or a zip, pre-upload checks, progress); **Custom domain** card (steps and polling); **Backend** card (upload, state, usage meter, environment variables, logs, **Class AI** and **Class storage** sections); **Start here** card (kit download, repository links, checklist, older downloads); upload guidelines.
 - **Shared:** dialogs for confirmations and number input (decimals supported), toasts, dark and light themes, layouts that work at phone width.
+
+### 4.14 Class storage connector (F14)
+
+Teacher-controlled **data and file storage** for a student's backend, capped and metered. Full description for teachers and students: [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md). Added after the baseline of sections 11 and 12; it is **off unless `StorageEnabled=true`** and not yet deployed to production at the time of writing (section 12.3, item 4).
+
+**Design decisions.** (1) *Isolation by construction, not by IAM:* all student functions share one sandbox role, and per-student IAM roles would give the portal's function the power to create roles and add a propagation delay to every deploy. Instead the student's function holds an **opaque key** (`cs_<slug>.<secret>`); the storage API works out the owner from the key and builds every DynamoDB key and S3 key itself, so a student cannot name another student's data. (2) *Own API and function* (`StorageApi` + `StorageFunction`, throttled separately) so a busy loop cannot slow the portal. (3) *Hard caps everywhere* so cost cannot run away: bytes, items, file space, file count, value size, and an operations allowance. (4) *Not SQL*: a collection is a list ordered by id; **no RDS** (always-on cost, private network, shared server).
+
+| Part | Specification |
+|---|---|
+| Switch | `StorageEnabled` template parameter (default `false`, needs `BackendEnabled=true`); per student `POST /api/admin/tokens/{id}/storage {enabled?, data_mb?, files_mb?, ops_limit?, ops_period?}`. Off is immediate (checked on every call); data is kept. |
+| Key | made on first switch-on, kept while the student exists, stored on the token item (`storage.key`), never part of any API view; compared in constant time. |
+| Student function receives | `CLASS_STORAGE_URL`, `CLASS_STORAGE_KEY` (set on publish and on every switch; the names are reserved while on, like the AI names). |
+| Data | table `StudentDataTable` (partition `s` = `<slug>#<collection>`, sort `id`, on demand, retained on stack deletion); value is a JSON string up to **64 KB**; collection `[a-z0-9_-]{1,40}`, id `[A-Za-z0-9._-]{1,128}`. Operations: put, get, delete, list (ordered by id, 100 per page and at most 400 KB per answer, `after` for the next page). |
+| Quotas (atomic counters in the tokens table) | bytes `sbytes#<slug>` (cap `data_mb`, default **5**, max 100), items `sitems#<slug>` (cap **5,000**); both reserved with a conditional update **before** the write and returned if the write fails, so a cap cannot be overshot by parallel callers. |
+| Files | S3 `userdata/<slug>/<name>` (flat names, up to **5 MB** each, **100** files, total cap `files_mb` default **50**, max 500). The API returns a **presigned POST** limited to the declared size and the declared content type (the browser or the function sends the bytes straight to S3, so the 1 MB request limit does not apply); downloads are 5-minute presigned links. Usage is counted by listing the folder, so it cannot drift. |
+| Allowance | every API call counts one operation (`sops#<slug>#<period>`, atomic, default **10,000 per day**, `ops_limit` up to 1,000,000, period day, month or total); `429 allowance_used` when spent. |
+| Lifecycle | the token must be active (not expired, revoked or offline) and the switch on, on every call. |
+| Errors | JSON `{"error": code, "message"}`: `bad_key` 401, `token_inactive` and `not_enabled` 403, `allowance_used` 429, `quota_exceeded` and `too_large` 413, `bad_request` 400, `not_found` 404. |
+| Student helper | `class_storage.py` / `class_storage.mjs` (single-source files copied into the kit): `put/get/items/delete`, `files.put/list/url/delete/upload_url`; retries once on 5xx or a network error, 8 s timeout, raises `StorageError(kind)`; on a student's computer it keeps everything in `.class-storage/` with the same rules; on the platform without the variables it raises `not_enabled` instead of pretending. |
+| IAM | `StorageFunction`: `GetItem`/`UpdateItem` on the tokens table, `GetItem`/`PutItem`/`DeleteItem`/`Query` on `StudentDataTable`, `GetObject`/`PutObject`/`DeleteObject` on `userdata/*`, `ListBucket` limited to the `userdata/` prefix. The portal's function gains **no** new permission. |
+| Cost | on-demand billing: an idle app costs nothing; the caps bound the data (about 5 MB per student) and the allowance bounds the requests. Alarm `storage-errors` on the function. |
+
+<!-- diagram:952c97df -->
+![Diagram: 4.14 Class storage connector (F14)](diagrams/technical-specification/15-4-14-class-storage-connector-f14.png)
+
+<details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
+
+```mermaid
+sequenceDiagram
+    participant T as Teacher
+    participant P as Portal API
+    participant F as Student function sd-slug
+    participant A as Storage API
+    participant D as DynamoDB and S3
+    T->>P: storage on, caps (data, files, allowance)
+    P->>P: make key cs_slug.secret once, store it on the token
+    P->>F: set CLASS_STORAGE_URL and CLASS_STORAGE_KEY
+    F->>A: put scores/alice (Bearer key)
+    A->>A: key names the student, token active, switch on
+    A->>A: one operation off the allowance
+    A->>A: reserve bytes and item against the caps
+    A->>D: write slug#scores / alice
+    A-->>F: 200 id and bytes
+    F->>A: files upload-url name and size
+    A-->>F: presigned POST, limited to that size
+    F->>D: the bytes go straight to userdata/slug/name
+```
+
+</details>
+<!-- /diagram -->
 
 ---
 
@@ -672,12 +725,13 @@ Complete request and response shapes: [API_REFERENCE.md](API_REFERENCE.md). Rout
 | Group | Routes |
 |---|---|
 | Logins | `POST /api/teacher/login`, `POST /api/student/login` |
-| Teacher | `GET/POST /api/admin/tokens`, `POST /api/admin/tokens/{id}/revoke\|extend\|offline\|approve\|deny\|domain-access\|backend\|ai`, `GET /api/admin/requests` |
-| Student | `GET /api/student/me`, `POST /api/student/regen-request`, `POST /api/student/upload-url`, `POST /api/student/publish`, `GET /api/student/ai` |
+| Teacher | `GET/POST /api/admin/tokens`, `POST /api/admin/tokens/{id}/revoke\|extend\|offline\|approve\|deny\|domain-access\|backend\|ai\|storage`, `GET /api/admin/requests` |
+| Student | `GET /api/student/me`, `POST /api/student/regen-request`, `POST /api/student/upload-url`, `POST /api/student/publish`, `GET /api/student/ai`, `GET /api/student/storage` |
 | Domain | `PUT/DELETE /api/student/domain`, `GET /api/student/domain/status` |
 | Backend | `GET/DELETE /api/student/backend`, `POST .../backend/upload-url`, `POST .../backend/publish`, `PUT .../backend/env`, `DELETE .../backend/env/{NAME}`, `GET .../backend/logs` |
 | Legacy CLI | `POST /upload-url`, `POST /publish` with `x-deploy-key` |
 | Student backend (public) | `ANY /api/...` on a student's address, handled by the gateway |
+| Storage API (called by student functions only) | `PUT/GET/DELETE /v1/data/{collection}/{id}`, `GET /v1/data/{collection}`, `POST /v1/files/upload-url`, `GET /v1/files`, `GET/DELETE /v1/files/{name}`, with `Authorization: Bearer cs_<slug>.<secret>` |
 | Static downloads | `portal-deploy.mjs`, `deploy-frontend-folder.yml`, `deploy-root-app.yml`, `github-deploy-guide.md`, `starter-kit.zip`, `kit-version.json` |
 
 Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "<code>", "message": "..."}`). Gateway error codes are catalogued in appendix A.
@@ -704,6 +758,7 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 | `AiSecretName` | `openrouter` | `openrouter` | Secrets Manager secret with the management key |
 | `AiDefaultModel` | `anthropic/claude-haiku-5.5` | same | default model id |
 | `AiDefaultLimitUsd` | `0.25` | `0.25` | default per-student cap |
+| `StorageEnabled` | `false` | `false` (not yet deployed) | class storage connector: creates `StudentDataTable`, `StorageApi`, `StorageFunction` and the `storage-errors` alarm (needs `BackendEnabled`) |
 
 ### 6.2 Lambda environment (set for every function through `Globals`)
 
@@ -754,7 +809,7 @@ Techniques: in-memory fakes for S3, Lambda, CloudWatch Logs, CloudFront tenants 
 ### 7.3 Release procedure
 
 <!-- diagram:16706a27 -->
-![Diagram: 7.3 Release procedure](diagrams/technical-specification/15-7-3-release-procedure.png)
+![Diagram: 7.3 Release procedure](diagrams/technical-specification/16-7-3-release-procedure.png)
 
 <details><summary>Diagram source (Mermaid, editable; GitHub also draws it)</summary>
 
@@ -816,6 +871,7 @@ Least privilege per role; no standing secrets in students' hands; every limit en
 | `DeployFunctionRole` | read, write, delete, scan | sites bucket | create, update, delete, configure `sd-*` only | SSM read (two parameters), Secrets Manager (one secret), CloudFront invalidations and tenants, ACM, pass-role to the sandbox role only, logs for `sd-*` |
 | `GatewayFunctionRole` | get, put, update | none | invoke `sd-*` only | none |
 | `SweeperFunctionRole` | update, delete, scan | sites bucket | none | Secrets Manager (one secret), CloudFront tenants and invalidations |
+| `StorageFunctionRole` (only with storage) | tokens table: get, update; `StudentDataTable`: get, put, delete, query | `userdata/*` objects; list limited to the `userdata/` prefix | none | none |
 | `StudentSandboxRole` | none | none | none | write its own logs |
 
 ### 8.4 Residual risks (accepted for the MVP)
@@ -862,6 +918,7 @@ A student can call their own public `/api` from anywhere and can use their own c
 | `backend-gateway-errors` | 1 or more unhandled errors of `GatewayFunction` in 5 minutes |
 | `sweeper-errors` | the daily sweeper failed (period 24 h) |
 | `backend-5xx` | 20 or more 5xx answers from the Backend API in 5 minutes |
+| `storage-errors` (only with storage) | 1 or more unhandled errors of `StorageFunction` in 5 minutes |
 
 All notify `AlertsTopic`; the subscription is confirmed (a test alarm email was received). The cost budget on the account is the owner's own AWS Budget (not managed here).
 
@@ -873,7 +930,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 ## 11. Quality evidence at baseline
 
-- Local suite: 30 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
+- Local suite: 33 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
 - Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks pass; the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
@@ -908,7 +965,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | 1 | **Re-tune capacity after the quota increase:** in-flight caps (3 and 2), `ConcurrencyAlarmThreshold` (8, to about 800) and per-student reserved concurrency were set for the old limit of 10 | open; do with a load test |
 | 2 | Publish the **public template repository** (`TEMPLATE_URL` in `web/github.js`) | waiting for the owner to create the empty repository |
 | 3 | **Deploy activity history** ("did my push go live?"); the checklist currently ticks "published" from the last deploy of any kind | planned |
-| 4 | A **capped per-student storage connector** (students need shared data; AI agents otherwise invent different external services) | decision pending |
+| 4 | A **capped per-student storage connector** (students need shared data; AI agents otherwise invent different external services) | **built** (section 4.14); deploy with `StorageEnabled=true`, then a live smoke test and a pilot |
 | 5 | **Pilot** with two or three real students | planned |
 | 6 | Alert when the OpenRouter credit balance runs low; teacher view of AI spend across students | planned |
 | 7 | "Rotate this student's key" button (manual runbook exists) | planned |
@@ -954,20 +1011,22 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "sessions": { "teacherHours": 8, "studentHours": 12, "maxFailedLogins": 5, "lockoutMinutes": 15 },
   "tokens": { "maxDays": 365, "graceDays": 3, "warnDays": 3 },
   "ai": { "minUsd": 0.01, "maxUsd": 20, "defaultUsd": 0.25, "refreshSeconds": 20, "studentTimeoutSeconds": 25, "defaultModel": "anthropic/claude-haiku-5.5", "envNames": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "AI_MODEL"] },
+  "storage": { "maxValueKB": 64, "maxItems": 5000, "maxFileMB": 5, "maxFiles": 100, "defaultDataMB": 5, "maxDataMB": 100, "defaultFilesMB": 50, "maxFilesMB": 500, "defaultOps": 10000, "defaultPeriod": "day", "listPageItems": 100, "envNames": ["CLASS_STORAGE_URL", "CLASS_STORAGE_KEY"] },
   "lambdas": {
     "DeployFunction": { "memory": 1024, "timeout": 29 },
     "GatewayFunction": { "memory": 256, "timeout": 29 },
+    "StorageFunction": { "memory": 256, "timeout": 10 },
     "SweeperFunction": { "memory": 512, "timeout": 300 }
   },
-  "apiThrottles": { "BackendApi": { "rate": 10, "burst": 20 }, "DeployApi": { "rate": 20, "burst": 50 } },
-  "templateParameterDefaults": { "BackendEnabled": "false", "AiEnabled": "false", "OfflineGraceDays": "3", "ConcurrencyAlarmThreshold": "8", "AiDefaultLimitUsd": "0.25", "AiDefaultModel": "anthropic/claude-haiku-5.5", "AiSecretName": "openrouter" },
+  "apiThrottles": { "BackendApi": { "rate": 10, "burst": 20 }, "DeployApi": { "rate": 20, "burst": 50 }, "StorageApi": { "rate": 20, "burst": 40 } },
+  "templateParameterDefaults": { "BackendEnabled": "false", "AiEnabled": "false", "StorageEnabled": "false", "OfflineGraceDays": "3", "ConcurrencyAlarmThreshold": "8", "AiDefaultLimitUsd": "0.25", "AiDefaultModel": "anthropic/claude-haiku-5.5", "AiSecretName": "openrouter" },
   "deployedParameters": { "BackendEnabled": "true", "AiEnabled": "true", "PortalAlias": "true" },
   "sweeperCron": "cron(0 3 * * ? *)",
   "s3Lifecycle": { "uploadsExpireDays": 1, "noncurrentVersionDays": 30 },
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
-  "kitVersion": "1.3.1",
-  "testSteps": 30,
-  "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx"]
+  "kitVersion": "1.4.0",
+  "testSteps": 33,
+  "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx", "storage-errors"]
 }
 ```
 

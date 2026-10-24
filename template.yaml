@@ -72,6 +72,14 @@ Parameters:
     Type: String
     Default: '0.25'
     Description: Default spending cap per student in USD, used the first time the teacher switches AI on. The teacher can edit it per student.
+  StorageEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: >
+      Class storage connector: the teacher can give a student's backend a small database (DynamoDB) and file area (S3) with hard caps
+      (needs BackendEnabled='true'). Creates the data table, the storage API and its function. Off by default; with it off nothing about
+      student backends changes. See docs/STORAGE_CONNECTOR.md.
   AlertEmailParameter:
     Type: String
     Default: ''
@@ -101,8 +109,10 @@ Conditions:
   UsePortalAlias: !And [!Condition UseCustomDomain, !Equals [!Ref PortalAlias, 'true']]
   UseBackend: !Equals [!Ref BackendEnabled, 'true']
   UseAi: !Equals [!Ref AiEnabled, 'true']
+  UseStorage: !And [!Condition UseBackend, !Equals [!Ref StorageEnabled, 'true']]
   UseAlerts: !Not [!Equals [!Ref AlertEmailParameter, '']]
   UseAlertsAndBackend: !And [!Condition UseAlerts, !Condition UseBackend]
+  UseAlertsAndStorage: !And [!Condition UseAlerts, !Condition UseStorage]
 
 Globals:
   Function:
@@ -126,6 +136,7 @@ Globals:
         PER_IP_PER_MINUTE: '120'
         ORIGIN_SECRET: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
         AI_ENABLED: !Ref AiEnabled
+        STORAGE_ENABLED: !Ref StorageEnabled
         AI_SECRET_NAME: !Ref AiSecretName
         AI_DEFAULT_MODEL: !Ref AiDefaultModel
         AI_DEFAULT_LIMIT_USD: !Ref AiDefaultLimitUsd
@@ -150,6 +161,12 @@ Resources:
               - UseCustomDomain
               - [!Sub 'https://deploy.${RootDomain}']
               - ['*']
+            MaxAge: 3600
+          # class storage: a student's page uploads a file with a presigned POST and reads it with a presigned GET link; the signature,
+          # not the origin, is what authorises each request
+          - AllowedMethods: [POST, GET]
+            AllowedHeaders: ['*']
+            AllowedOrigins: ['*']
             MaxAge: 3600
       # Versioning is the undo button: an overwritten or deleted site file stays recoverable for 30 days (see docs/END_TO_END.md,
       # "Recovering a file"). CloudFront and the Lambdas only ever see the current version, so nothing else changes.
@@ -242,6 +259,26 @@ Resources:
         Enabled: true
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
+
+  # Class storage connector (storage.py): one table for every student's data. Items are <slug>#<collection> / <id>, so a student's data is
+  # only ever reached through the storage API, which builds the keys from the caller's own key. On-demand: an idle app costs nothing.
+  StudentDataTable:
+    Type: AWS::DynamoDB::Table
+    Condition: UseStorage
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: s
+          AttributeType: S
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: s
+          KeyType: HASH
+        - AttributeName: id
+          KeyType: RANGE
 
   # ---------- CDN ----------
   SitesOAC:
@@ -477,6 +514,54 @@ Resources:
             Path: /b/{slug}
             Method: ANY
 
+  # ---------- Class storage connector ----------
+  # Its own API and function, so a student's busy loop cannot slow the portal. The student's function calls it over HTTPS with its own key.
+  StorageApi:
+    Type: AWS::Serverless::HttpApi
+    Condition: UseStorage
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 40
+        ThrottlingRateLimit: 20
+
+  StorageFunction:
+    Type: AWS::Serverless::Function
+    Condition: UseStorage
+    Properties:
+      CodeUri: lambda/
+      Handler: storage_api.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 10
+      Environment:
+        Variables:
+          DATA_TABLE: !Ref StudentDataTable
+      Policies:
+        - Statement:
+            - Effect: Allow # the key lookup and the counters live in the tokens table
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow
+              Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query]
+              Resource: !GetAtt StudentDataTable.Arn
+            - Effect: Allow # student files live under userdata/ only (published sites are under sites/)
+              Action: [s3:GetObject, s3:PutObject, s3:DeleteObject]
+              Resource: !Sub '${SitesBucket.Arn}/userdata/*'
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !GetAtt SitesBucket.Arn
+              Condition:
+                StringLike:
+                  s3:prefix: ['userdata/*']
+      Events:
+        Any:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref StorageApi
+            Path: /{proxy+}
+            Method: ANY
+
   # ---------- Web portal (deploy.<RootDomain>) ----------
   # Static pages come from s3://bucket/portal/ (node admin.mjs portal-publish); /api/* goes to the API below.
   PortalFunction:
@@ -576,6 +661,9 @@ Resources:
       Architectures: [arm64]
       MemorySize: 1024
       Timeout: 29 # HTTP API waits at most 30s
+      Environment:
+        Variables:
+          STORAGE_URL: !If [UseStorage, !Sub 'https://${StorageApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}', '']
       Policies:
         - Statement:
             - Effect: Allow
@@ -830,6 +918,23 @@ Resources:
       TreatMissingData: notBreaching
       AlarmActions: [!Ref AlertsTopic]
 
+  StorageErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Condition: UseAlertsAndStorage
+    Properties:
+      AlarmName: !Sub '${AWS::StackName}-storage-errors'
+      AlarmDescription: The class storage API crashed (an unhandled error in the platform code). Check its CloudWatch logs.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions: [{Name: FunctionName, Value: !Ref StorageFunction}]
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions: [!Ref AlertsTopic]
+
   BackendServerErrorsAlarm:
     Type: AWS::CloudWatch::Alarm
     Condition: UseAlertsAndBackend
@@ -885,6 +990,13 @@ Outputs:
     Condition: UseBackend
     Description: Backend API (reached through CloudFront at <student>.<RootDomain>/api/)
     Value: !Sub 'https://${BackendApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  StorageApiUrl:
+    Condition: UseStorage
+    Description: Class storage API (given to student functions as CLASS_STORAGE_URL)
+    Value: !Sub 'https://${StorageApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  StudentDataTableName:
+    Condition: UseStorage
+    Value: !Ref StudentDataTable
   KeysParameterName:
     Value: !Ref KeysParameterName
   TeacherParameterName:

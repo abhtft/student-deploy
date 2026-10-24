@@ -21,7 +21,8 @@ export function renderBackend(box, token, { call, setToken }) {
   if (!b || !b.available) { box.classList.add('hidden'); return; }
   box.classList.remove('hidden');
   const a = token.ai || { available: false };
-  const state = JSON.stringify([b.enabled, b.state, b.error, b.env_names, token.can_deploy, a.available, a.enabled, a.model, a.base_url, a.limit_usd, a.period, a.key_active]);
+  const st = token.storage || { available: false };
+  const state = JSON.stringify([b.enabled, b.state, b.error, b.env_names, token.can_deploy, a.available, a.enabled, a.model, a.base_url, a.limit_usd, a.period, a.key_active, st.available, st.enabled, st.limits]);
   if (state !== sig) {
     sig = state;
     clearTimeout(timer);
@@ -81,6 +82,8 @@ function build(box, token, ctx) {
     if (b.state === 'ready') body.push(envSection(b, ctx, error));
     const ai = aiSection(token, ctx);
     if (ai) body.push(ai);
+    const storage = storageSection(token, ctx);
+    if (storage) body.push(storage);
     if (b.state === 'ready') body.push(logsSection(ctx));
   }
   if (b.state !== 'none') body.push(removeButton(ctx, error));
@@ -256,6 +259,69 @@ function scheduleAiRefresh(ctx) {
     }
     if (aiMeterBox) scheduleAiRefresh(ctx);
   }, 60000);
+}
+
+// ---------- class storage connector ----------
+const MB = 1048576;
+const STORAGE_PYTHON = `import class_storage as storage     # class_storage.py is in your backend folder (kit)
+
+storage.put("scores", "alice", {"points": 3})            # save a record (any JSON up to 64 KB)
+record = storage.get("scores", "alice", default=None)    # read it back
+rows = storage.items("scores")                           # [{"id": ..., "value": ...}, ...]
+storage.delete("scores", "alice")
+
+link = storage.files.upload_url("photo.png", 20000, "image/png")   # the browser posts the file straight to it
+storage.files.list(); storage.files.url("photo.png"); storage.files.delete("photo.png")`;
+
+const STORAGE_NODE = `import * as storage from './class_storage.mjs';   // class_storage.mjs is in your backend folder (kit)
+
+await storage.put('scores', 'alice', { points: 3 });
+const record = await storage.get('scores', 'alice', null);
+const rows = await storage.items('scores');
+await storage.del('scores', 'alice');
+
+const link = await storage.files.uploadUrl('photo.png', 20000, 'image/png');
+await storage.files.list(); await storage.files.url('photo.png'); await storage.files.delete('photo.png');`;
+
+function barRow(label, used, limit, text) {
+  const percent = limit > 0 ? Math.min(100, (used / limit) * 100) : 100;
+  const cls = percent >= 100 ? 'bad' : percent >= 80 ? 'warn' : '';
+  return h('div', {},
+    h('div', { class: `bar ${cls}`, role: 'progressbar', 'aria-label': label, 'aria-valuenow': Math.round(percent), 'aria-valuemin': 0, 'aria-valuemax': 100 },
+      h('span', { style: `width:${Math.max(percent, used ? 2 : 0)}%` })),
+    h('div', { class: 'small muted', style: 'margin-top:4px' }, text));
+}
+
+function storageSection(token, ctx) {
+  const s = token.storage;
+  if (!s || !s.available) return null;
+  if (!s.enabled) {
+    return h('p', { class: 'small muted', style: 'margin:8px 0 0' }, 'Class storage is not switched on for you. If your project needs to save data or files (scores, notes, uploads), ask your teacher: it comes with size limits and needs no database of your own.');
+  }
+  const l = s.limits;
+  const u = s.usage || { data_bytes: 0, items: 0, ops_used: 0 };
+  const filesBox = h('div', { class: 'small muted' }, 'Checking your files…');
+  ctx.call('/api/student/storage').then((r) => {
+    const f = r.files || { count: 0, bytes: 0 };
+    fill(filesBox, barRow('File space used', f.bytes, l.files_mb * MB, `Files: ${f.count} of ${l.max_files}, ${(f.bytes / MB).toFixed(1)} of ${l.files_mb} MB`));
+  }).catch(() => fill(filesBox, ''));
+  const runtime = token.backend.runtime === 'nodejs22.x' ? 'node' : 'python';
+  return h('div', { class: 'stack' },
+    h('h2', { style: 'margin:8px 0 0' }, 'Class storage'),
+    h('p', { class: 'muted small', style: 'margin:0' },
+      'Your teacher switched on storage for your backend: a small database and a file area, with no setup. These variables are set for your function automatically: ',
+      ...s.env_names.flatMap((n, i) => [i ? ', ' : '', h('code', {}, n)]),
+      '. Use the helper in your backend folder; do not call them yourself.'),
+    barRow('Database size used', u.data_bytes, l.data_mb * MB, `Data: ${(u.data_bytes / MB).toFixed(2)} of ${l.data_mb} MB (${u.items.toLocaleString()} of ${l.max_items.toLocaleString()} items)`),
+    filesBox,
+    barRow('Operations used', u.ops_used, l.ops_limit, `${u.ops_used.toLocaleString()} of ${l.ops_limit.toLocaleString()} operations ${PER[l.ops_period]} (every read, write or file call counts)`),
+    u.ops_used >= l.ops_limit ? h('div', { class: 'notice bad' }, 'Your storage allowance is used up for now, so storage calls fail until it resets. Handle the error in your code. Ask your teacher for more.') : null,
+    h('details', {}, h('summary', {}, `Example (${runtime === 'node' ? 'Node' : 'Python'})`), h('pre', { class: 'logs' }, runtime === 'node' ? STORAGE_NODE : STORAGE_PYTHON)),
+    h('ul', { class: 'small muted', style: 'margin:0;padding-left:20px;display:grid;gap:2px' },
+      h('li', {}, `A value is up to ${l.max_value_kb} KB; a file is up to ${l.max_file_mb} MB. Everything is private to you.`),
+      h('li', {}, 'Do not store secrets or other people’s personal data in records or files.'),
+      h('li', {}, 'Anyone who can reach your page can call your routes, so check the input before you save it.'),
+      h('li', {}, 'When something is full or the allowance is used up, the helper raises an error with a clear message. Show a friendly one.')));
 }
 
 // ---------- logs ----------

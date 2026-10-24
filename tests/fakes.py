@@ -21,9 +21,18 @@ class Body:
 class FakeS3:
     def __init__(self, port=0):
         self.port = port
+        self.posts = []
 
     def generate_presigned_url(self, op, Params, ExpiresIn):
         return f"http://127.0.0.1:{self.port}/s3/{Params['Key']}"
+
+    def generate_presigned_post(self, Bucket, Key, Fields, Conditions, ExpiresIn):
+        self.posts.append({"Key": Key, "Fields": Fields, "Conditions": Conditions, "ExpiresIn": ExpiresIn})
+        return {"url": f"http://127.0.0.1:{self.port}/s3-post", "fields": {**Fields, "key": Key, "policy": "fake-policy", "x-amz-signature": "fake"}}
+
+    def list_objects_v2(self, Bucket, Prefix, MaxKeys=1000, ContinuationToken=None):
+        keys = [k for k in sorted(store) if k.startswith(Prefix)]
+        return {"Contents": [{"Key": k, "Size": len(store[k]["Body"]), "LastModified": 1700000000} for k in keys]}
 
     def head_object(self, Bucket, Key):
         if Key not in store:

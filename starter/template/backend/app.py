@@ -14,8 +14,10 @@ Run it on your computer with `npm run dev` (or `npm run dev -- --backend-only`).
 """
 import base64
 import json
+import time
 from urllib.parse import parse_qs
 
+import class_storage as storage  # the platform's helper for saving data (needs the teacher to switch class storage on)
 from class_ai import AiError, ask  # the platform's helper for the class AI: two lines are all you need
 
 
@@ -59,5 +61,18 @@ def handler(event, context):
         except AiError as error:
             return respond(503, {"error": error.kind, "message": error.message})
         return respond(200, {"answer": answer})
+
+    if path == "/notes" and method in ("GET", "POST"):
+        try:
+            if method == "GET":  # the newest 20 notes (ids start with the time, so they come back oldest first)
+                return respond(200, {"notes": [row["value"] for row in storage.items("notes")][-20:]})
+            text = str(read_json(event).get("text", "")).strip()
+            if not text or len(text) > 200:
+                return respond(400, {"error": "bad_request", "message": "Send a note of 1 to 200 characters."})
+            note = {"id": f"{int(time.time() * 1000):013d}", "text": text}
+            storage.put("notes", note["id"], note)  # THE storage call: collection, id, any JSON
+            return respond(201, note)
+        except storage.StorageError as error:  # not switched on, full, allowance used... a friendly message and a kind
+            return respond(503, {"error": error.kind, "message": str(error)})
 
     return respond(404, {"error": "not_found", "message": "No such route."})

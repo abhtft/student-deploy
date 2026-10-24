@@ -59,7 +59,7 @@ function tokenRow(t) {
       t.regen.state === 'pending' ? h('span', { class: 'pill warn' }, 'Regeneration requested') : null),
       h('div', { class: 'small muted', style: 'margin-top:4px' }, `Token …${t.hint} · ${t.last_deploy_at ? `last deploy ${date(t.last_deploy_at)}` : 'never deployed'}`),
       t.custom_domain.domain ? h('div', { class: 'small muted', style: 'margin-top:2px' }, `Custom domain: ${t.custom_domain.domain} (${t.custom_domain.state.replace('_', ' ')})`) : null,
-      backendLine(t), aiLine(t)),
+      backendLine(t), aiLine(t), storageLine(t)),
     expiryBar(t),
     h('div', { class: 'btns' },
       live && t.custom_domain.available ? btn(t.custom_domain.enabled ? 'Domain: on' : 'Domain: off', () => toggleDomain(t)) : null,
@@ -68,6 +68,8 @@ function tokenRow(t) {
       live && t.backend.available && t.backend.enabled ? btn('+1,000', () => addRuns(t)) : null,
       live && t.backend.available && t.ai.available ? btn(t.ai.enabled ? 'AI: on' : 'AI: off', () => toggleAi(t)) : null,
       live && t.ai.available && t.ai.enabled ? btn('AI cap…', () => editAi(t)) : null,
+      live && t.backend.available && t.storage.available ? btn(t.storage.enabled ? 'Storage: on' : 'Storage: off', () => toggleStorage(t)) : null,
+      live && t.storage.available && t.storage.enabled ? btn('Storage caps…', () => editStorage(t)) : null,
       live ? btn('Extend', () => extend(t)) : null,
       live && !t.archived ? btn('Take offline', () => offline(t)) : null,
       live ? btn('Revoke', () => revoke(t), 'danger') : null));
@@ -121,6 +123,36 @@ function aiLine(t) {
   const paused = a.key_active ? '' : ' · paused while the token is not active';
   return h('div', { class: `small ${spent ? '' : 'muted'}`, style: 'margin-top:2px' },
     `AI: on · ${a.model} · ${usd(a.used_usd)} of ${usd(a.limit_usd)} ${PER[a.period]}${calls}${paused}`);
+}
+
+const MB = 1048576;
+const mb = (bytes) => `${(bytes / MB).toFixed(bytes < MB * 10 ? 1 : 0)} MB`;
+
+function storageLine(t) {
+  const s = t.storage;
+  if (!s.available || !s.enabled) return null;
+  const u = s.usage || { data_bytes: 0, items: 0, ops_used: 0 };
+  const l = s.limits;
+  const full = u.data_bytes >= l.data_mb * MB || u.ops_used >= l.ops_limit;
+  return h('div', { class: `small ${full ? '' : 'muted'}`, style: 'margin-top:2px' },
+    `Storage: on · data ${mb(u.data_bytes)} of ${l.data_mb} MB (${u.items.toLocaleString()} items) · files up to ${l.files_mb} MB · ${u.ops_used.toLocaleString()} / ${l.ops_limit.toLocaleString()} operations ${PER[l.ops_period]}`);
+}
+
+async function toggleStorage(t) {
+  const enabled = !t.storage.enabled;
+  act(`/api/admin/tokens/${t.id}/storage`, { enabled },
+    enabled ? `Storage switched on for ${t.slug}: ${t.storage.limits.data_mb} MB of data and ${t.storage.limits.files_mb} MB of files` : `Storage switched off for ${t.slug}: their data is kept but not served`);
+}
+
+async function editStorage(t) {
+  const l = t.storage.limits;
+  const r = await ask({ title: `Storage caps for ${t.slug}`,
+    text: 'Hard limits, enforced by the platform on every call. Data is small JSON records (up to 64 KB each); files are up to 5 MB each.',
+    fields: [{ name: 'data_mb', label: 'Database size (MB)', type: 'number', value: l.data_mb, min: 1, max: 100, required: true },
+      { name: 'files_mb', label: 'File space (MB)', type: 'number', value: l.files_mb, min: 1, max: 500, required: true },
+      { name: 'ops_limit', label: 'Operations allowed (each read, write or file call is one)', type: 'number', value: l.ops_limit, min: 0, max: 1000000, required: true },
+      { name: 'ops_period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: l.ops_period }], confirm: 'Save' });
+  if (r) act(`/api/admin/tokens/${t.id}/storage`, { data_mb: Number(r.data_mb), files_mb: Number(r.files_mb), ops_limit: Number(r.ops_limit), ops_period: r.ops_period }, 'Storage caps saved');
 }
 
 async function toggleAi(t) {

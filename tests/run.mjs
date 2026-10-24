@@ -106,6 +106,23 @@ await step('student kit end to end: deploy through portal-deploy.mjs, class AI o
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('class storage: switch and caps, key isolation between students, exact quotas, allowance, files, lifecycle, no key exposed', () => {
+  const r = spawnSync(python, [join(here, 'test_storage.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('class storage template: off by default, tightly scoped IAM, private bucket, retained data table', () => {
+  const r = spawnSync(python, [join(here, 'test_template_storage.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
+await step('class storage helpers (Python and Node) against the real storage API: data, files, every error kind, the local folder', () => {
+  for (const test of ['test_class_storage.py', 'test_class_storage.mjs']) {
+    const r = test.endsWith('.py') ? spawnSync(python, [join(here, test)], { encoding: 'utf8' }) : spawnSync('node', [join(here, test)], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${test}: ${r.stderr || r.stdout}`);
+  }
+});
+
 await step('student kit MCP server: handshake, check, status and deploy tools, confirm required, token never echoed', () => {
   const r = spawnSync('node', [join(here, 'test_mcp.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
