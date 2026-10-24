@@ -16,6 +16,7 @@ A website (`frontend/`) and one backend function (`backend/`), hosted on your cl
    npm run deploy
    ```
    Your site is live at the address the portal shows. Run `npm run deploy` again after each change.
+   Prefer to just ask your AI editor? In VS Code open the Chat in Agent mode and start the `class-platform` tool server (this folder has it ready); in Antigravity run `npm run mcp-config` and paste what it prints. Then say "publish my site" (it still asks you first).
 6. **Optional: automatic deploy from GitHub.** Create a GitHub repository for this folder, then repository > *Settings* > *Secrets and variables* > *Actions* > *New repository secret*, name `PORTAL_TOKEN`, value = your token. Then push again.
    Push to `main`; the **Actions** tab turns green when your site is live. Never write your token into a file yourself: `npm run login` stores it safely.
 

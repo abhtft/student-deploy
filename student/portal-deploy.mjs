@@ -5,6 +5,7 @@
 //   node portal-deploy.mjs --only frontend  (or: --only backend)
 //   node portal-deploy.mjs --skip-build    deploy the frontend's existing build folder
 //   node portal-deploy.mjs --frontend web --backend api    use other folder names
+//   node portal-deploy.mjs status          is the saved token valid, and for how long (deploys nothing)
 //   node portal-deploy.mjs login           save your token once (asks for it, checks it, writes .env.local); `npm run login`
 //
 // Expected layout:   frontend/  your app (built with `npm run build` into dist/, build/ or out/)
@@ -63,6 +64,15 @@ async function ask(question, { hidden = false } = {}) {
     rl.once('line', (line) => { rl.close(); if (hidden) process.stdout.write('\n'); resolve(line.trim()); });
     rl.once('close', () => resolve(''));
   });
+}
+
+/** `status`: signs in with the saved token and says how long it is valid. Deploys nothing. */
+async function status() {
+  const saved = readToken();
+  if (!saved) fail('No token found. Run  npm run login  once (it asks for your token and saves it).');
+  const info = await signIn(saved);
+  const { token } = info;
+  console.log(`Signed in as ${info.name} (${info.slug}). Token status: ${token.status}; valid for ${info.daysLeft} more day${info.daysLeft === 1 ? '' : 's'}; ${token.can_deploy ? 'it can deploy.' : 'it CANNOT deploy right now: ask your teacher.'}`);
 }
 
 /** `login`: ask for the token, check it with the portal, save it to .env.local. The token is never printed. */
@@ -236,6 +246,7 @@ async function deployBackend(session, dir) {
 // ---------- main ----------
 async function main() {
   if (args[0] === 'login') return login(option('--token'));
+  if (args[0] === 'status') return status();
   const only = option('--only');
   if (only && !['frontend', 'backend'].includes(only)) fail('--only must be "frontend" or "backend".');
   const frontendDir = option('--frontend', 'frontend');

@@ -106,6 +106,7 @@ There is **no database**. Choose the simplest option and **tell the student its 
 | `npm run doctor` | Checks Node, Python and git on the computer. |
 | `npm run login` | **The student runs this themselves, once.** It asks for the portal token (hidden), checks it and saves it in `.env.local`. |
 | `npm run deploy` | Publishes the backend, then the frontend, straight from this computer. |
+| `npm run mcp-config` | Prints the settings that connect an AI editor's tool server (see "Deploying"). |
 
 ## How to work
 
@@ -123,6 +124,8 @@ When the student says "deploy", "publish" or "put it online":
 2. Run `npm run deploy` and read the result back to the student: the site address printed after "Frontend live at", and whether the backend is ready.
 3. If it says **No token found** (or the token is not accepted / expired), the student must run **`npm run login`** in their own terminal and paste the token there (it is hidden). Do not run it for them, do not ask for the token, and do not look for it in any file. Then run `npm run deploy` again.
 4. If it says the token cannot deploy (expired), tell the student to ask the teacher for an extension or regeneration on the portal.
+
+**If your editor has the `class-platform` tools** (VS Code: the project's `.vscode/mcp.json`; Antigravity: the student pasted the snippet from `npm run mcp-config`), use them instead of the terminal: `check_project`, then ask the student "publish now?", then `deploy` with `confirm=true` only after they say yes; `status` tells whether the token is valid. The tools refuse to deploy a project that fails the check. The token still comes from `npm run login`; the tools never ask for it.
 
 Deploying from GitHub (push to `main`) is the alternative for students who use GitHub; it does not need `npm run login`.
 

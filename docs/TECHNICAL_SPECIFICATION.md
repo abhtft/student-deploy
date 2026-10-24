@@ -10,7 +10,7 @@
 | Product | Class Hosting Platform: a controlled place where a teacher gives students expiring tokens, and students publish a website, a small backend and (optionally) an AI key, mostly by pushing to GitHub |
 | Code base | this repository, branch `feature/custom-domains-and-portal-hosting` (the release baseline is the commit that adds this document; `git log -1` shows it) |
 | Production | AWS account of the owner, region `us-east-1`, CloudFormation stack `student-hosting` (status `UPDATE_COMPLETE`), portal `https://deploy.margdarshakss.com`, student sites `https://<name>.margdarshakss.com` |
-| Student kit | version `1.2.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
+| Student kit | version `1.3.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
@@ -614,7 +614,7 @@ sequenceDiagram
 </details>
 <!-- /diagram -->
 
-`student/portal-deploy.mjs` (single dependency-free file) does exactly the portal's flow with the token: sign in, refuse a token that cannot deploy (with the status), deploy `backend/` first (waits until `ready`, up to 120 s), then `frontend/` (runs `npm run build`, finds `dist/`, `build/` or `out/`). Layout options: `--frontend <dir>` (use `.` for an app at the repo root), `--backend <dir>`, `--only`, `--skip-build`. Safety: the repo root is never published as-is, `.env*` and `node_modules` are never included in the frontend zip, `.env*` in the backend is refused before any upload. The token comes from `PORTAL_TOKEN` (environment, `.env.local` or `.env`). `node portal-deploy.mjs login` (kit: `npm run login`) asks for it with hidden input (or one line on stdin), checks it with the portal, and writes only the `PORTAL_TOKEN` line of `.env.local`, keeping other lines; it refuses when `git check-ignore` says `.env.local` is not ignored, never prints the token, and `deploy` offers the same prompt when no token is found in a terminal. A token the portal rejects (401/403/404) gets one message: run `npm run login` with the current token. The kit checker skips `.env.local` in its secret scan and still errors if git tracks it. It exits by itself (no `process.exit` after network use). Workflow templates: `student/portal-deploy.yml` (app in `frontend/`) and `student/portal-deploy-root.yml` (app at the repo root).
+`student/portal-deploy.mjs` (single dependency-free file) does exactly the portal's flow with the token: sign in, refuse a token that cannot deploy (with the status), deploy `backend/` first (waits until `ready`, up to 120 s), then `frontend/` (runs `npm run build`, finds `dist/`, `build/` or `out/`). Layout options: `--frontend <dir>` (use `.` for an app at the repo root), `--backend <dir>`, `--only`, `--skip-build`. Safety: the repo root is never published as-is, `.env*` and `node_modules` are never included in the frontend zip, `.env*` in the backend is refused before any upload. The token comes from `PORTAL_TOKEN` (environment, `.env.local` or `.env`). `node portal-deploy.mjs login` (kit: `npm run login`) asks for it with hidden input (or one line on stdin), checks it with the portal, and writes only the `PORTAL_TOKEN` line of `.env.local`, keeping other lines; it refuses when `git check-ignore` says `.env.local` is not ignored, never prints the token, and `deploy` offers the same prompt when no token is found in a terminal. A token the portal rejects (401/403/404) gets one message: run `npm run login` with the current token. The kit checker skips `.env.local` in its secret scan and still errors if git tracks it. `portal-deploy.mjs status` signs in and reports the token's validity without deploying. **MCP server** (`tools/mcp.mjs`, kit 1.3.0): newline-delimited JSON-RPC over stdio, tools `check_project`, `deploy` (`confirm` must be `true`; runs the check first and stops on errors; optional `only`) and `status`, each running the project's own scripts with stdin closed and a timeout; output has ANSI codes removed and any `mds_` token masked, and is capped at 8,000 characters. `.vscode/mcp.json` ships in the kit; for Antigravity `--print-config` prints the entry with absolute paths. No token is stored in editor settings. It exits by itself (no `process.exit` after network use). Workflow templates: `student/portal-deploy.yml` (app in `frontend/`) and `student/portal-deploy-root.yml` (app at the repo root).
 
 ### 4.11 Student kit (F11)
 
@@ -873,7 +873,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 ## 11. Quality evidence at baseline
 
-- Local suite: 29 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
+- Local suite: 30 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
 - Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks pass; the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
@@ -965,8 +965,8 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "sweeperCron": "cron(0 3 * * ? *)",
   "s3Lifecycle": { "uploadsExpireDays": 1, "noncurrentVersionDays": 30 },
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
-  "kitVersion": "1.2.0",
-  "testSteps": 29,
+  "kitVersion": "1.3.0",
+  "testSteps": 30,
   "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx"]
 }
 ```

@@ -24,7 +24,7 @@ buildKit(kit);
 const rules = read(join(repo, 'starter', 'rules', 'AGENTS.md')).replace(/\r\n/g, '\n');
 for (const path of ['AGENTS.md', 'GEMINI.md', 'CLAUDE.md', '.claude/skills/class-platform/SKILL.md', '.cursor/rules/class-platform.mdc', '.github/copilot-instructions.md', '.windsurfrules',
   'README.md', 'PROMPTS.md', 'package.json', 'platform.json', '.gitignore', '.env.example', 'portal-deploy.mjs', 'kit-manifest.json', '.github/workflows/deploy.yml',
-  'tools/check.mjs', 'tools/dev.mjs', 'tools/dev_server.py', 'tools/dev_server.mjs', 'tools/doctor.mjs', 'frontend/package.json', 'frontend/package-lock.json',
+  'tools/check.mjs', 'tools/mcp.mjs', '.vscode/mcp.json', 'tools/dev.mjs', 'tools/dev_server.py', 'tools/dev_server.mjs', 'tools/doctor.mjs', 'frontend/package.json', 'frontend/package-lock.json',
   'frontend/src/App.tsx', 'frontend/src/api.ts', 'backend/app.py', 'backend/class_ai.py', 'variants/node-backend/index.mjs', 'variants/node-backend/class_ai.mjs']) {
   assert.ok(existsSync(join(kit, path)), `the kit is missing ${path}`);
 }
