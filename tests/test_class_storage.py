@@ -65,7 +65,7 @@ try:
 
     use(info["off_key"])
     fails("not_enabled", storage.put, "t", "a", 1)
-    use(info["key"][:-1] + "Z")
+    use(info["key"].split(".")[0] + "." + "A" * 32)  # right student, wrong secret
     fails("bad_key", storage.get, "t", "a")
     use(info["key"], url="http://127.0.0.1:9/storage")  # nothing listens there
     fails("unavailable", storage.get, "t", "a")

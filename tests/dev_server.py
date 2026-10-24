@@ -117,7 +117,6 @@ seed("Carol", -1)
 dave = seed("Dave", -5, archived=True, archived_at=t0 - 2 * DAY)
 seed("Erin", 10, revoked=True)
 print("Teacher: teacher / teacher-pass-123")
-print("Backend demo: sign in as Alice, deploy a backend (see student/backend-template), then try  http://127.0.0.1:%d/b/alice/hello\n" % port, flush=True)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -224,6 +223,19 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, b"", "text/plain")
 
     def do_GET(self):
+        if self.path.startswith("/__dev/storage-seed"):  # local demo only: pretend the student's app saved some data and files
+            import storage
+            query = dict(part.split("=", 1) for part in self.path.partition("?")[2].split("&") if "=" in part)
+            lock = portal.db().get(f"slug#{query.get('slug', '')}")
+            item = portal.db().get(f"tok#{lock['token']}") if lock else None
+            if not item:
+                return self.send(404, b'{"ok": false}')
+            item = storage.set_storage(item, {"enabled": True}, int(time.time())) if not storage.is_on(item) else item
+            for n in range(int(query.get("records", "12"))):
+                storage.put_value(item, "notes", f"n{n:04d}", {"text": "demo note " * 20}, int(time.time()))
+            for n in range(int(query.get("files", "3"))):
+                store[f"userdata/{item['slug']}/demo{n}.bin"] = {"Body": b"x" * (200_000 * (n + 1))}
+            return self.send(200, b'{"ok": true}')
         if self.path.startswith("/__dev/ai-spend"):  # local demo only: pretend the student's function used the AI
             query = dict(part.split("=", 1) for part in self.path.partition("?")[2].split("&") if "=" in part)
             key = dev_router.by_name(f"student:{query.get('slug', '')}")
@@ -252,4 +264,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send(200, open(path, "rb").read(), ctype + ("; charset=utf-8" if ctype.startswith("text/") or "javascript" in ctype else ""))
 
 
-ThreadingHTTPServer(("127.0.0.1", port), Handler).serve_forever()
+httpd = ThreadingHTTPServer(("127.0.0.1", port), Handler)  # bound (and accepting connections) from here on, so the banner below means "ready"
+print("Backend demo: sign in as Alice, deploy a backend (see student/backend-template), then try  http://127.0.0.1:%d/b/alice/hello\n" % port, flush=True)
+httpd.serve_forever()

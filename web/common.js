@@ -122,7 +122,9 @@ export async function copyText(text) {
 
 export function toast(message) {
   const el = h('div', { class: 'toast', role: 'status' }, message);
-  document.body.append(el);
+  // inside the open dialog (if any): a dialog is shown above everything else on the page, so a toast outside it would be hidden
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  host.append(el);
   setTimeout(() => el.remove(), 2500);
 }
 

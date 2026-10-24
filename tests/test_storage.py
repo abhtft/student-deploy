@@ -155,7 +155,7 @@ assert env(b_slug)["CLASS_STORAGE_KEY"] == b_key and b_key != a_key
 # ---------- 4. keys: only the right student's key opens anything ----------
 assert api(None, "GET", "/v1/data/notes/x")[0] == 401
 assert api("garbage", "GET", "/v1/data/notes/x")[0] == 401
-assert api(a_key[:-1] + "X", "GET", "/v1/data/notes/x")[0] == 401, "a key with a wrong secret"
+assert api(a_key.split(".")[0] + "." + "A" * 32, "GET", "/v1/data/notes/x")[0] == 401, "a key with a wrong secret"
 assert api(f"cs_nobody.{'a' * 30}", "GET", "/v1/data/notes/x")[0] == 401
 assert api(a_key, "GET", "/v1/data/notes/x")[1]["error"] == "not_found"
 print("  ok  missing, malformed, wrong-secret and unknown-student keys are refused")
@@ -332,6 +332,84 @@ assert api(a_key, "POST", "/v1/files/upload-url", {"name": "f0.txt", "size": 5})
 status, body = call("GET", "/api/student/storage", session=a_session)
 assert status == 200 and body["files"] == {"count": storage.MAX_FILES, "bytes": storage.MAX_FILES}, body
 print("  ok  the file space and the file count are capped; replacing a file is allowed at the cap")
+
+# ---------- 12b. the teacher's overview and "clear": sizes and counts only, never the content ----------
+h_tid, h_session, h_slug = new_student("Hana")
+i_tid, i_session, i_slug = new_student("Ivo")
+st_set(h_tid, enabled=True)
+st_set(i_tid, enabled=True)
+h_key, i_key = key_of(h_tid), key_of(i_tid)
+for coll in ("alpha", "beta"):
+    for n in range(3):
+        assert api(h_key, "PUT", f"/v1/data/{coll}/r{n}", {"value": "v" * 100})[0] == 200
+assert api(i_key, "PUT", "/v1/data/alpha/r0", {"value": "ivo's"})[0] == 200
+store[f"userdata/{h_slug}/a.bin"] = {"Body": b"x" * 400}
+store[f"userdata/{h_slug}/b.bin"] = {"Body": b"y" * 100}
+store[f"userdata/{i_slug}/keep.bin"] = {"Body": b"z" * 50}
+status, body = call("GET", "/api/admin/storage", session=admin)
+assert status == 200, body
+by_slug = {r["slug"]: r for r in body["students"]}
+assert h_slug in by_slug and i_slug in by_slug and by_slug[h_slug]["usage"]["items"] == 6 and by_slug[h_slug]["files"] == {"count": 2, "bytes": 500}, by_slug.get(h_slug)
+assert by_slug[i_slug]["files"] == {"count": 1, "bytes": 50} and by_slug[i_slug]["usage"]["items"] == 1
+assert body["totals"]["items"] >= 7 and body["totals"]["files"] >= 3 and body["totals"]["enabled"] >= 2, body["totals"]
+assert "v" * 20 not in json.dumps(body) and "ivo's" not in json.dumps(body) and "cs_" not in json.dumps(body), "the overview never carries content or keys"
+assert call("GET", "/api/admin/storage")[0] == 401 and call("GET", "/api/admin/storage", session=h_session)[0] == 401, "teacher only"
+unused = [r["slug"] for r in body["students"] if r["slug"] == b_slug]
+print("  ok  overview: per-student sizes and counts, totals, no content or key, teacher only")
+
+# clear the data only
+status, body = call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {"scope": "data"}, admin)
+assert status == 200 and body["cleared"] == {"items": 6, "files": 0}, body
+assert counts(h_slug) == (0, 0), "counters are back to zero"
+assert api(h_key, "GET", "/v1/data/alpha/r0")[0] == 404 and api(h_key, "GET", "/v1/data/beta")[1]["items"] == []
+assert [f["name"] for f in api(h_key, "GET", "/v1/files")[1]["files"]] == ["a.bin", "b.bin"], "files untouched by a data-only clear"
+assert api(i_key, "GET", "/v1/data/alpha/r0")[1]["value"] == "ivo's" and f"userdata/{i_slug}/keep.bin" in store, "another student is untouched"
+assert api(h_key, "PUT", "/v1/data/alpha/again", {"value": 1})[0] == 200 and counts(h_slug)[1] == 1, "the key and the switch still work after a clear"
+# clear files only
+status, body = call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {"scope": "files"}, admin)
+assert body["cleared"] == {"items": 0, "files": 2} and api(h_key, "GET", "/v1/files")[1]["files"] == [] and api(h_key, "GET", "/v1/data/alpha/again")[0] == 200
+assert f"userdata/{i_slug}/keep.bin" in store
+# clear everything, also while storage is switched off and after the token is revoked (the cleanup case)
+store[f"userdata/{h_slug}/c.bin"] = {"Body": b"c"}
+st_set(h_tid, enabled=False)
+call("POST", f"/api/admin/tokens/{h_tid}/revoke", {}, admin)
+inactive = {r["slug"]: r for r in call("GET", "/api/admin/storage", session=admin)[1]["students"]}[h_slug]
+assert inactive["inactive"] is True and inactive["holds_data"], "a revoked student who still holds data is flagged"
+status, body = call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {"scope": "all"}, admin)
+assert status == 200 and body["cleared"] == {"items": 1, "files": 1}, body
+after = {r["slug"]: r for r in call("GET", "/api/admin/storage", session=admin)[1]["students"]}[h_slug]
+assert after["holds_data"] is False and after["inactive"] is False and after["usage"]["data_bytes"] == 0
+assert call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {"scope": "everything"}, admin)[0] == 400
+assert call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {}, admin)[0] == 400
+assert call("POST", f"/api/admin/tokens/{h_tid}/storage/clear", {"scope": "all"})[0] == 401
+assert call("POST", f"/api/admin/tokens/{'0' * 64}/storage/clear", {"scope": "all"}, admin)[0] == 404
+print("  ok  clear: data, files or both; counters reset; others untouched; works for revoked students; bad scope refused")
+
+# collections are remembered (so clear finds them) and capped
+storage.MAX_COLLECTIONS = 3
+for n in range(2):  # Ivo already used "alpha", so two more names reach the cap of 3
+    assert api(i_key, "PUT", f"/v1/data/c{n}/x", {"value": 1})[0] == 200
+status, body = api(i_key, "PUT", "/v1/data/c2/x", {"value": 1})
+assert status == 413 and "collection names" in body["message"], body
+assert api(i_key, "PUT", "/v1/data/c0/y", {"value": 2})[0] == 200, "an existing name keeps working at the cap"
+storage.MAX_COLLECTIONS = 50
+cleared = call("POST", f"/api/admin/tokens/{i_tid}/storage/clear", {"scope": "data"}, admin)[1]["cleared"]
+assert cleared["items"] == 4 and all(api(i_key, "GET", f"/v1/data/{c}/x")[0] == 404 for c in ("c0", "c1")) and api(i_key, "GET", "/v1/data/alpha/r0")[0] == 404, cleared
+print("  ok  every collection a student used is found by clear; the number of names is capped")
+
+# the remembered list heals: if its items are deleted behind a warm container's back, the next write after the memory expires recreates them
+j_tid, j_session, j_slug = new_student("Jo")
+st_set(j_tid, enabled=True)
+j_key = key_of(j_tid)
+assert api(j_key, "PUT", "/v1/data/memo/x", {"value": 1})[0] == 200
+portal.db().delete(f"scoll#{j_slug}#memo")
+portal.db().delete(f"scollcount#{j_slug}")
+assert api(j_key, "PUT", "/v1/data/memo/y", {"value": 2})[0] == 200
+assert portal.db().get(f"scoll#{j_slug}#memo") is None, "inside the memory window nothing is re-checked"
+assert api(j_key, "PUT", "/v1/data/memo/z", {"value": 3}, at=now + storage.REMEMBER_SECONDS + 5)[0] == 200
+assert portal.db().get(f"scoll#{j_slug}#memo") is not None and portal.db().get(f"scollcount#{j_slug}")["count"] == 1
+assert call("POST", f"/api/admin/tokens/{j_tid}/storage/clear", {"scope": "data"}, admin)[1]["cleared"]["items"] == 3
+print("  ok  the remembered collection list is rebuilt after a minute if it was deleted elsewhere")
 
 # ---------- 13. routes and bodies ----------
 assert api(a_key, "GET", "/v2/nothing")[0] == 404

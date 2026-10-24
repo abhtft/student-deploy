@@ -102,6 +102,7 @@ check("storage.maxValueKB", st["maxValueKB"], const(storage_src, "MAX_VALUE_BYTE
 check("storage.maxItems", st["maxItems"], const(storage_src, "MAX_ITEMS"))
 check("storage.maxFileMB", st["maxFileMB"], int(re.search(r"^MAX_FILE_BYTES = (\d+) \* MB", storage_src, re.M).group(1)))
 check("storage.maxFiles", st["maxFiles"], const(storage_src, "MAX_FILES"))
+check("storage.maxCollections", st["maxCollections"], const(storage_src, "MAX_COLLECTIONS"))
 defaults = lambda name: tuple(int(x.strip().replace("_", "")) for x in re.search(rf"^{name} = ([\d_, ]+)", storage_src, re.M).group(1).split(","))  # noqa: E731
 check("storage.defaultDataMB", st["defaultDataMB"], defaults("DEFAULT_DATA_MB, MAX_DATA_MB")[0])
 check("storage.maxDataMB", st["maxDataMB"], defaults("DEFAULT_DATA_MB, MAX_DATA_MB")[1])

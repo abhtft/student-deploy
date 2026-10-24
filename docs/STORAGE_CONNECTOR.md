@@ -65,6 +65,8 @@ Every read, write, list and file call is one operation. Names: collections are l
 1. **Deploy once with the feature on** (see section 6). Nothing changes for anyone until you switch a student on.
 2. On the teacher page each student row gets **Storage: off/on** and **Storage caps...**. Switching on creates the student's key, writes `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY` into their function (or into the function when it is first created) and shows their usage on the row. Switching off stops all access at once; the data is kept and is served again when you switch back on.
 3. A revoked, expired or offline token pauses the student's storage automatically.
+4. **Clear storage...** (in the student's details, or **Clear...** on the Storage tab) empties what the student stored: records, files or both. You type the student's name to confirm. The key, the switch and the caps stay. The **Storage** tab shows the whole class: how much is stored, who is near a cap, and students marked **Needs cleanup** (no longer using storage but still holding data, for example a revoked student). Nothing is deleted automatically.
+5. **You never see what a student stored.** The portal shows sizes and counts only; no route returns a value, a file name or a key. This is deliberate: students can keep notes and uploads private from the teacher as well as from each other, and the teacher cannot leak what they cannot read.
 4. The student sees the limits and their usage on their Backend card, with a code example in their language.
 
 ## 5. For the student (what the helper does)
@@ -112,6 +114,7 @@ DynamoDB on-demand is billed per request and per GB-month; S3 per GB-month and p
 | Oversized or hostile input | Size limits on value, body, file and name patterns; the presigned POST carries the size and content type; listing counts bytes |
 | Bucket exposure | Public access stays blocked; CloudFront never serves `userdata/`; downloads are short-lived signed links; the CORS rule allows POST and GET but access still needs a valid signature |
 | Cost abuse | Caps, allowance, throttle, retained on-demand billing |
+| Teacher access | The teacher can switch, resize and clear, never read. The portal's function can find and delete a student's items but not read or write one (verified by IAM simulation in the live test) |
 | Residual | A student's own code can leak its own data to its own visitors; data is not encrypted per student (it is encrypted at rest by AWS defaults); there is no per-student backup of the database |
 
 ## 9. Testing

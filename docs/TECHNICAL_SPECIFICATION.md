@@ -13,7 +13,7 @@
 | Student kit | version `1.4.0` (`starter/template/platform.json`), served by the portal as `starter-kit.zip` |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
-| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** (section 4.14) **deployed to production** on 2026-10-24 (`StorageEnabled="true"`, change set reviewed first: seven resources added, the rest modified in place, nothing replaced) and verified by 27 live checks (section J of `tests/live_smoke.py`); it is off for every student until the teacher switches it on. Kit 1.4.0 and the updated portal pages are published. Local suite is now 33 steps. Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
+| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** (section 4.14) **deployed to production** on 2026-10-24 (`StorageEnabled="true"`, change set reviewed first: seven resources added, the rest modified in place, nothing replaced) and verified by 27 live checks (section J of `tests/live_smoke.py`); it is off for every student until the teacher switches it on. Kit 1.4.0 and the updated portal pages are published. Local suite is now 33 steps. **2026-10-24 (later):** the teacher dashboard was redesigned (summary tiles, student list, a detail panel that opens on click, a Storage tab) and the teacher can now **clear a student's storage** and see **storage across the class** (sizes and counts only; section 4.14), deployed and verified live (110 live checks, including the IAM scope of the portal function). Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
 
 ### How to read this document
@@ -669,7 +669,7 @@ Six CloudWatch alarms notify one SNS topic by email (address read from SSM at de
 
 Static pages from `web/`, built with a tiny DOM helper that never parses text as HTML; no build step.
 
-- **Teacher page** (`/teacher`): sign-in; tabs **Tokens** and **Requests** (with a badge); token creation (days, name, slug); per-token row with status pill, expiry bar, last deploy, custom-domain state and the buttons Domain on/off, Backend on/off, Runs..., +1,000, AI on/off, AI cap..., Storage on/off, Storage caps..., Extend, Take offline, Revoke; request review (Approve, Deny).
+- **Teacher page** (`/teacher`): sign-in; four summary tiles (students and how many are active, expiring soon, pending requests, class storage in use); tabs **Students**, **Requests** (with a badge) and **Storage**; token creation (days, name, slug). The **Students** tab is a searchable list: each row shows an avatar, the name and site, small chips for the features that are on, the status and the time left. **Clicking a student opens a detail panel** (a side panel that becomes full-screen on a phone) with the token facts and the lifecycle actions (Extend, Take offline, Revoke) and one card per feature with an on/off switch and its meters and buttons: Custom domain, Backend (runs meter, Edit allowance, +1,000), Class AI (spend meter, Edit cap), Class storage (records, files and operations meters, Edit caps, **Clear storage**). Nothing but the list is on the main page. The **Storage** tab shows the class totals and a row per student with meters, a state (On, Off, Needs cleanup) and a quick Clear; it shows sizes and counts only. **Requests** keeps Approve and Deny.
 - **Student page** (`/student`): sign-in with the token; status card (expiry bar, last upload, 3-day warning banner, regeneration request); **Upload your site** (drop a build folder or a zip, pre-upload checks, progress); **Custom domain** card (steps and polling); **Backend** card (upload, state, usage meter, environment variables, logs, **Class AI** and **Class storage** sections); **Start here** card (kit download, repository links, checklist, older downloads); upload guidelines.
 - **Shared:** dialogs for confirmations and number input (decimals supported), toasts, dark and light themes, layouts that work at phone width.
 
@@ -691,7 +691,9 @@ Teacher-controlled **data and file storage** for a student's backend, capped and
 | Lifecycle | the token must be active (not expired, revoked or offline) and the switch on, on every call. |
 | Errors | JSON `{"error": code, "message"}`: `bad_key` 401, `token_inactive` and `not_enabled` 403, `allowance_used` 429, `quota_exceeded` and `too_large` 413, `bad_request` 400, `not_found` 404. |
 | Student helper | `class_storage.py` / `class_storage.mjs` (single-source files copied into the kit): `put/get/items/delete`, `files.put/list/url/delete/upload_url`; retries once on 5xx or a network error, 8 s timeout, raises `StorageError(kind)`; on a student's computer it keeps everything in `.class-storage/` with the same rules; on the platform without the variables it raises `not_enabled` instead of pretending. |
-| IAM | `StorageFunction`: `GetItem`/`UpdateItem` on the tokens table, `GetItem`/`PutItem`/`DeleteItem`/`Query` on `StudentDataTable`, `GetObject`/`PutObject`/`DeleteObject` on `userdata/*`, `ListBucket` limited to the `userdata/` prefix. The portal's function gains **no** new permission. |
+| IAM | `StorageFunction`: `GetItem`/`UpdateItem` on the tokens table, plus `PutItem`/`DeleteItem` there **only for keys starting `scoll#`** (an IAM condition on `dynamodb:LeadingKeys`), `GetItem`/`PutItem`/`DeleteItem`/`Query` on `StudentDataTable`, `GetObject`/`PutObject`/`DeleteObject` on `userdata/*`, `ListBucket` limited to the `userdata/` prefix. The portal's function (`DeployFunction`) gains only `Query`, `BatchWriteItem` and `DeleteItem` on `StudentDataTable` (to find and delete a student's items for "clear"): it still cannot read, write or scan a value; the live test asks IAM itself to confirm this. |
+| Teacher tools | `GET /api/admin/storage` (per student: switch, caps, bytes, items, operations, **file count and bytes from one listing of `userdata/`**; totals; a flag `inactive` for a student who is revoked, offline or switched off but still holds data) and `POST /api/admin/tokens/{id}/storage/clear {scope: data \| files \| all}`. **The teacher never sees what a student stored**: no route returns a value, a file name or a key (a deliberate privacy decision). Clearing deletes every record of every collection the student ever used (found through the remembered list below), resets the byte and item counters to zero, and deletes the files; the key, the switch and the caps stay. Files are in a versioned bucket, so the owner can still restore a deleted file for 30 days. The portal asks the teacher to type the student's name before it clears. Nothing is deleted automatically: students who no longer use storage but still hold data appear as **Needs cleanup** for the teacher to clear. |
+| Remembered collections | one item `scoll#<slug>#<collection>` in the tokens table per collection name a student has used (at most **50** names), created once with a conditional put and counted in `scollcount#<slug>`; it exists so "clear" can find every partition without scanning the data table. A container trusts its own memory for 60 seconds, so a deleted list is rebuilt by the next write. |
 | Cost | on-demand billing: an idle app costs nothing; the caps bound the data (about 5 MB per student) and the allowance bounds the requests. Alarm `storage-errors` on the function. |
 
 <!-- diagram:952c97df -->
@@ -776,7 +778,7 @@ Complete request and response shapes: [API_REFERENCE.md](API_REFERENCE.md). Rout
 | Group | Routes |
 |---|---|
 | Logins | `POST /api/teacher/login`, `POST /api/student/login` |
-| Teacher | `GET/POST /api/admin/tokens`, `POST /api/admin/tokens/{id}/revoke\|extend\|offline\|approve\|deny\|domain-access\|backend\|ai\|storage`, `GET /api/admin/requests` |
+| Teacher | `GET/POST /api/admin/tokens`, `POST /api/admin/tokens/{id}/revoke\|extend\|offline\|approve\|deny\|domain-access\|backend\|ai\|storage\|storage/clear`, `GET /api/admin/requests`, `GET /api/admin/storage` |
 | Student | `GET /api/student/me`, `POST /api/student/regen-request`, `POST /api/student/upload-url`, `POST /api/student/publish`, `GET /api/student/ai`, `GET /api/student/storage` |
 | Domain | `PUT/DELETE /api/student/domain`, `GET /api/student/domain/status` |
 | Backend | `GET/DELETE /api/student/backend`, `POST .../backend/upload-url`, `POST .../backend/publish`, `PUT .../backend/env`, `DELETE .../backend/env/{NAME}`, `GET .../backend/logs` |
@@ -846,7 +848,7 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 | Web | `web` | folder checks and zip builder (the zip is validated by the Lambda's own validator), dollar formatting, repository-link parsing |
 | AI helper | Python and Node | errors, retries, mock, key never printed |
 | Student kit | three steps | contents and rule copies, checker rules (about 30 fixtures), local dev servers; `platform update`; end to end deploy of the kit to the whole dev portal in Python and Node |
-| Class storage | three steps | `test_storage.py` (switch and caps, isolation between students, exact quotas, rollback, allowance, files, lifecycle, no key exposed; mutation-tested), the helpers in Python and Node against the real storage API over HTTP (`tests/storage_fixture.py`), and the template (off by default, IAM scope, retained table, private bucket) |
+| Class storage | three steps | `test_storage.py` (switch and caps, isolation between students, exact quotas, rollback, allowance, files, lifecycle, the teacher's overview and clear, no key or content exposed; mutation-tested), the helpers in Python and Node against the real storage API over HTTP (`tests/storage_fixture.py`), and the template (off by default, IAM scope, retained table, private bucket) |
 | Student kit extras | steps | the MCP server driven like an editor (`test_mcp.mjs`: handshake, confirm required, a failing check blocks a deploy, token never echoed); `npm run login` (masked prompt keys, a wrong token saves nothing, the git-ignore guard) inside `test_portal_cli.mjs` |
 | Diagrams | `diagrams` | every Mermaid diagram in the documentation has a current PNG (`docs/diagrams/render.mjs` regenerates; the test needs no browser) |
 | Specification | `specification` | the machine-checked facts in section 14 equal the code |
@@ -924,10 +926,10 @@ Least privilege per role; no standing secrets in students' hands; every limit en
 
 | Role | Table | S3 | Lambda | Other |
 |---|---|---|---|---|
-| `DeployFunctionRole` | read, write, delete, scan | sites bucket | create, update, delete, configure `sd-*` only | SSM read (two parameters), Secrets Manager (one secret), CloudFront invalidations and tenants, ACM, pass-role to the sandbox role only, logs for `sd-*` |
+| `DeployFunctionRole` | read, write, delete, scan; with storage also `StudentDataTable`: query, batch-write, delete (no reads of values) | sites bucket | create, update, delete, configure `sd-*` only | SSM read (two parameters), Secrets Manager (one secret), CloudFront invalidations and tenants, ACM, pass-role to the sandbox role only, logs for `sd-*` |
 | `GatewayFunctionRole` | get, put, update | none | invoke `sd-*` only | none |
 | `SweeperFunctionRole` | update, delete, scan | sites bucket | none | Secrets Manager (one secret), CloudFront tenants and invalidations |
-| `StorageFunctionRole` (only with storage) | tokens table: get, update; `StudentDataTable`: get, put, delete, query | `userdata/*` objects; list limited to the `userdata/` prefix | none | none |
+| `StorageFunctionRole` (only with storage) | tokens table: get, update, and put or delete under `scoll#` only; `StudentDataTable`: get, put, delete, query | `userdata/*` objects; list limited to the `userdata/` prefix | none | none |
 | `StudentSandboxRole` | none | none | none | write its own logs |
 
 ### 8.4 Residual risks (accepted for the MVP)
@@ -988,7 +990,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 - Local suite: 33 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
-- Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks passed at the baseline and 101 pass now (the 27 new ones are class storage, section J); the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
+- Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks passed at the baseline and 110 pass now (36 new ones are class storage, section J, including clearing and an IAM simulation of the portal function's role); the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
 
 ---
@@ -1033,7 +1035,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | 8 | Custom-domain infrastructure into CloudFormation | known gap, documented |
 | 9 | Several teacher accounts; Content-Security-Policy; "Request more runs" from the student | backlog |
 | 10 | Whether each AI editor actually loads the rule files (agents in the evaluation were told to read `AGENTS.md`) | not verified |
-| 12 | Class storage: **deployed and live-tested** (27 live checks, including the presigned upload to real S3, S3's own size refusal, CORS headers and the off switch). Still open: the API throttle was not load-tested; decide whether the data table needs point-in-time recovery; pilot with real students | partly done |
+| 12 | Class storage: **deployed and live-tested** (36 live checks, including the presigned upload to real S3, S3's own size refusal, CORS headers and the off switch). Still open: the API throttle was not load-tested; decide whether the data table needs point-in-time recovery; pilot with real students | partly done |
 | 13 | MCP server in real editors: **VS Code confirmed by the owner** (after the one-click *Migrate* that newer versions offer, which rewrites `.vscode/mcp.json` to `.mcp.json` with absolute paths and `"type": "local"`; the kit keeps shipping `.vscode/mcp.json` because a portable `.mcp.json` would need `${workspaceFolder}` to be expanded, which is unconfirmed). Antigravity still not checked | partly verified |
 | 14 | **Re-run the AI evaluation** against the kit 1.2 to 1.4 rules (Deploying, class storage) | open |
 | 15 | `platform update` cannot add new `package.json` scripts (the file is the student's); older projects need them added by hand or a fresh kit | known gap |
@@ -1060,7 +1062,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | R13 | Kit updates are safe | `tools/platform.mjs`, `starter/zip.mjs` | `test_kit_update.mjs` |
 | R14 | Alerts, recoverable files, backups | `template.yaml` | `test_template_ops.py`, live alarm test |
 | R15 | No secret or email in the repository | tests that scan the repo | `test_template_ai.py`, `test_template_ops.py`, `test_kit.mjs` |
-| R17 | Per-student data and files, capped, isolated, switchable, never exposing a key | `storage.py`, `storage_api.py`, `class_storage.*`, `template.yaml` | `test_storage.py`, `test_class_storage.*`, `test_template_storage.py`, `test_kit_e2e.mjs` |
+| R17 | Per-student data and files, capped, isolated, switchable, clearable by the teacher, never exposing a key or the content | `storage.py`, `storage_api.py`, `class_storage.*`, `template.yaml` | `test_storage.py`, `test_class_storage.*`, `test_template_storage.py`, `test_kit_e2e.mjs` |
 | R18 | A student can deploy from their computer with one command, and an AI editor can do it with consent | `portal-deploy.mjs` (`login`, `status`), `tools/mcp.mjs`, `.vscode/mcp.json` | `test_portal_cli.mjs`, `test_mcp.mjs`, `test_kit.mjs` |
 | R16 | This specification matches the code | section 14 and `tests/test_spec.py` | `test_spec.py` |
 
@@ -1078,7 +1080,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "sessions": { "teacherHours": 8, "studentHours": 12, "maxFailedLogins": 5, "lockoutMinutes": 15 },
   "tokens": { "maxDays": 365, "graceDays": 3, "warnDays": 3 },
   "ai": { "minUsd": 0.01, "maxUsd": 20, "defaultUsd": 0.25, "refreshSeconds": 20, "studentTimeoutSeconds": 25, "defaultModel": "anthropic/claude-haiku-5.5", "envNames": ["OPENAI_API_KEY", "OPENAI_BASE_URL", "AI_MODEL"] },
-  "storage": { "maxValueKB": 64, "maxItems": 5000, "maxFileMB": 5, "maxFiles": 100, "defaultDataMB": 5, "maxDataMB": 100, "defaultFilesMB": 50, "maxFilesMB": 500, "defaultOps": 10000, "defaultPeriod": "day", "listPageItems": 100, "envNames": ["CLASS_STORAGE_URL", "CLASS_STORAGE_KEY"] },
+  "storage": { "maxValueKB": 64, "maxItems": 5000, "maxFileMB": 5, "maxFiles": 100, "maxCollections": 50, "defaultDataMB": 5, "maxDataMB": 100, "defaultFilesMB": 50, "maxFilesMB": 500, "defaultOps": 10000, "defaultPeriod": "day", "listPageItems": 100, "envNames": ["CLASS_STORAGE_URL", "CLASS_STORAGE_KEY"] },
   "lambdas": {
     "DeployFunction": { "memory": 1024, "timeout": 29 },
     "GatewayFunction": { "memory": 256, "timeout": 29 },

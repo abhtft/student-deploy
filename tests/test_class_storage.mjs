@@ -73,7 +73,7 @@ try {
 
   use(info.off_key);
   await fails('not_enabled', () => storage.put('t', 'a', 1));
-  use(`${info.key.slice(0, -1)}Z`);
+  use(`${info.key.split('.')[0]}.${'A'.repeat(32)}`); // right student, wrong secret
   await fails('bad_key', () => storage.get('t', 'a'));
   use(info.key, 'http://127.0.0.1:9/storage'); // nothing listens there
   await fails('unavailable', () => storage.get('t', 'a'));

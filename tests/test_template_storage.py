@@ -35,6 +35,9 @@ fn = block("StorageFunction")
 assert "Handler: storage_api.handler" in fn
 assert re.search(r"Action: \[dynamodb:GetItem, dynamodb:UpdateItem\]\n\s+Resource: !GetAtt TokensTable\.Arn", fn), "tokens table: key lookup and counters only"
 assert re.search(r"Action: \[dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query\]\n\s+Resource: !GetAtt StudentDataTable\.Arn", fn)
+assert re.search(r"Action: \[dynamodb:PutItem, dynamodb:DeleteItem\]\n\s+Resource: !GetAtt TokensTable\.Arn\n\s+Condition:\n\s+ForAllValues:StringLike:\n\s+dynamodb:LeadingKeys: \['scoll#\*'\]", fn), \
+    "the tokens table may be written only under the scoll# keys (the list of a student's collection names)"
+assert len(re.findall(r"dynamodb:PutItem", fn)) == 2, "PutItem exactly twice: the data table and the scoll# keys"
 assert "dynamodb:Scan" not in fn, "no scans"
 objects = re.findall(r"\$\{SitesBucket\.Arn\}/[^']*", fn)
 assert objects == ["${SitesBucket.Arn}/userdata/*"], f"objects: userdata/ only, found {objects}"
@@ -43,9 +46,15 @@ assert "lambda:" not in fn and "secretsmanager" not in fn and "cloudfront" not i
 assert "Timeout: 10" in fn
 
 # ---- nobody else gains access ----
-for name in ("DeployFunction", "SweeperFunction", "GatewayFunction", "StudentSandboxRole", "StudentSandboxBoundary"):
+for name in ("SweeperFunction", "GatewayFunction", "StudentSandboxRole", "StudentSandboxBoundary"):
     assert "StudentDataTable" not in block(name), f"{name} must not be able to reach the data table"
     assert "userdata" not in block(name), f"{name} must not name the userdata folder"
+# the portal's function may only FIND and DELETE a student's items (the teacher's "clear"): it can never read or write a value
+deploy = block("DeployFunction")
+grants = re.findall(r"Action: \[([^\]]*)\]\n\s+Resource: !GetAtt StudentDataTable\.Arn", deploy)
+assert grants == ["dynamodb:Query, dynamodb:BatchWriteItem, dynamodb:DeleteItem"], grants
+assert "- UseStorage" in deploy and "DATA_TABLE: !If [UseStorage, !Ref StudentDataTable, '']" in deploy, "only when storage is on"
+assert "userdata" not in deploy, "its bucket access is the existing one; nothing new names userdata"
 assert "STORAGE_URL: !If [UseStorage" in block("DeployFunction"), "the portal function learns the storage address"
 assert re.search(r"AllowedMethods: \[POST, GET\]\n\s+AllowedHeaders: \['\*'\]\n\s+AllowedOrigins: \['\*'\]", block("SitesBucket")), "browsers may POST to and GET from presigned links"
 assert "Principal: '*'" not in template and "PublicAccessBlockConfiguration" in block("SitesBucket"), "the bucket stays private"

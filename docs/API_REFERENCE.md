@@ -90,6 +90,13 @@ Class storage connector (needs `StorageEnabled`; see [STORAGE_CONNECTOR.md](STOR
 
 → `200 { "token": <view> }`. `400` invalid value; `409` the student's function is updating (repeat the same request); `503` the connector is not set up. An empty body changes nothing.
 
+### `POST /api/admin/tokens/{id}/storage/clear`
+Deletes what a student stored. Body: `{ "scope": "data" | "files" | "all" }`. Data means every record of every collection the student ever used; files means everything in their file folder. The byte and item counters go back to zero; the student's key, the switch and the caps stay. Works for a revoked student too (that is the cleanup case). The teacher sees no content: the answer carries only counts.
+→ `200 { "cleared": { "items": 40, "files": 3 }, "token": <view> }`. `400` bad scope; `404` unknown token; `503` the connector is not set up. Files are removed from a versioned bucket, so the owner can still restore one for 30 days.
+
+### `GET /api/admin/storage`
+Class storage at a glance. → `200 { "students": [...], "totals": {...} }` where each student is `{ id, slug, student_name, status, enabled, limits, usage: {data_bytes, items, ops_used, resets_at}, files: {count, bytes}, holds_data, inactive }` and `totals` is `{ students, enabled, inactive_with_data, data_bytes, items, files, files_bytes }`. Only students who have the switch on, ever had a key, or still hold data are listed. `inactive` is true when a student is revoked, offline or switched off but still holds data. No value, file name or key is ever returned. `503` when the connector is not set up.
+
 `{id}` is the token's `id` (a 64-character hex string) from the token view.
 
 ---

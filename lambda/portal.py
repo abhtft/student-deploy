@@ -14,6 +14,8 @@ Teacher (password -> signed session, 8 h):
   POST /api/admin/tokens/{id}/backend    {enabled?, runs_limit?, runs_period?}   backend on/off and run allowance
   POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?}   class AI connector (ai.py); {} refreshes usage
   POST /api/admin/tokens/{id}/storage    {enabled?, data_mb?, files_mb?, ops_limit?, ops_period?}   class storage connector (storage.py)
+  POST /api/admin/tokens/{id}/storage/clear   {scope: data | files | all}   delete a student's stored data and/or files
+  GET  /api/admin/storage                storage across the class: per student sizes and counts, totals (never the content)
 
 Student (the token itself is the login -> signed session, 12 h):
   POST /api/student/login                {token}
@@ -479,6 +481,15 @@ def dispatch(method, path, body, event, now, site_url):
             import ai
             item = ai.set_ai(get_token(ai_route.group(1)), body, now)
             return reply(200, token=view(item, now, site_url))
+        if (method, path) == ("GET", "/api/admin/storage"):
+            import storage
+            return reply(200, **storage.overview(now))
+        clear_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/storage/clear", path)
+        if method == "POST" and clear_route:
+            import storage
+            item = get_token(clear_route.group(1))
+            cleared = storage.clear(item, body.get("scope"), now)
+            return reply(200, cleared=cleared, token=view(item, now, site_url))
         storage_route = re.fullmatch(r"/api/admin/tokens/([0-9a-f]{64})/storage", path)
         if method == "POST" and storage_route:
             import storage

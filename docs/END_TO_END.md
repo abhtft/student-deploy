@@ -132,14 +132,16 @@ Status is **derived from time** (`expires_at`, the grace period, an `archived` f
 | Sign in | username and password (5 wrong attempts from one address lock it for 15 minutes) |
 | Create a token | **New token**: valid for 7 to 180 days or custom (1 to 365), optional student name, optional site name. The token is shown **once**: copy it, or use **Copy message for the student** |
 | Site name rules | teacher-set name, else made from the student name, else random (`s-xxxxxx`). 1 to 30 lowercase letters, digits and `-`. Reserved: `sites uploads archive deploy www api admin mail ftp app apps static assets bs lenden` |
-| See state | each row: status pill, expiry bar, last deploy, custom-domain state, backend usage |
-| Extend | adds days to the current expiry (counted from today if already expired); restores an archived site |
-| Take offline | stops serving the site now (files archived, not deleted) |
-| Revoke | the student can no longer sign in or deploy; the live site is not changed |
+| See state | four summary tiles on top, then the **Students** list: avatar, name and site, chips for the features that are on, status and time left. Use the search box to find a student |
+| **Open a student** | click the row: a detail panel opens with the token facts, the lifecycle buttons and one card per feature (each with an on/off switch, its meters and buttons). Press Esc or click outside to close it |
+| Extend (in the student's details) | adds days to the current expiry (counted from today if already expired); restores an archived site |
+| Take offline (details) | stops serving the site now (files archived, not deleted) |
+| Revoke (details) | the student can no longer sign in or deploy; the live site is not changed |
+| Storage tab | class totals, a meter row per student, and **Needs cleanup** for students who no longer use storage but still hold data; **Clear...** empties a student's storage (you type their name). You see sizes and counts only, never what they stored |
 | Requests tab | pending regeneration requests with the student's note: **Approve** (choose the new duration, counted from today) or **Deny** (optional reason) |
-| **Domain: on / off** | lets this student add a custom domain. Turning it off later does **not** remove a live domain |
-| **Backend: on / off** | ON serves requests and allows deploys. OFF answers `503 backend_off` within about 10 seconds and pauses deploys; code is kept. This is the kill switch |
-| **Runs…** / **+1,000** | the run allowance: a number and a period (`day`, `month`, `total`). Default 5,000 per month, maximum 1,000,000, 0 means none. A *run* is one call that reached the student's function (failures count, blocked requests do not) |
+| Custom domain switch (details) | lets this student add a custom domain. Turning it off later does **not** remove a live domain |
+| Backend switch (details) | ON serves requests and allows deploys. OFF answers `503 backend_off` within about 10 seconds and pauses deploys; code is kept. This is the kill switch |
+| **Edit allowance…** / **+1,000 runs** (Backend card) | the run allowance: a number and a period (`day`, `month`, `total`). Default 5,000 per month, maximum 1,000,000, 0 means none. A *run* is one call that reached the student's function (failures count, blocked requests do not) |
 
 Nothing is deleted automatically: archives, functions and code stay until a human removes them.
 
@@ -196,7 +198,7 @@ Good to know (measured live): OpenRouter counts usage a few seconds to about hal
 
 Apps need to remember things. The teacher can give a student's **backend** a small private database and file area, with hard caps, so nothing has to be set up and nothing can grow without limit. It is off for everyone until the owner deploys it (`StorageEnabled`) and the teacher switches it on per student.
 
-1. Teacher page: **Storage: on** for a student who has the Backend on (their function gets `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY`). **Storage caps...** edits the database size (default 5 MB), file space (50 MB) and the operations allowance (10,000 per day). The row shows usage. **Storage: off** stops access at once; the data is kept.
+1. Teacher page: click the student, then switch **Class storage** on (needs the Backend on; their function gets `CLASS_STORAGE_URL` and `CLASS_STORAGE_KEY`). **Edit caps...** edits the database size (default 5 MB), file space (50 MB) and the operations allowance (10,000 per day). The row shows usage. **Storage: off** stops access at once; the data is kept.
 2. The student's Backend card gets a **Class storage** section: three meters (database, files, operations), a code example in their language and the rules.
 3. In code: `import class_storage as storage`, then `storage.put("scores", "alice", {...})`, `storage.get(...)`, `storage.items("scores")`, `storage.delete(...)`, `storage.files.put(...)`. The kit's sample backend has a `/notes` route. It is not SQL: records are listed by id.
 4. A revoked, expired or offline token pauses storage; going over a cap or the allowance returns a clear error the student's code can show.
@@ -329,7 +331,7 @@ Done on production on 2026-10-24 (`StorageEnabled="true"` is in `samconfig.toml`
 
 1. Run the safe deploy routine with the extra parameter `StorageEnabled="true"` (add it to `parameter_overrides` in `samconfig.toml` when you are happy). Read the change set first: it should create `StudentDataTable`, `StorageApi`, `StorageFunction` and, with alerts, `StorageErrorsAlarm`, add a CORS rule on the bucket, and change `DeployFunction` only by adding `STORAGE_URL`. Nothing existing should be replaced.
 2. `node admin.mjs portal-publish` (the kit then contains the helpers; the pages already tolerate a server without storage).
-3. Teacher page: **Storage: on** for one test student, deploy the kit's sample backend as that student and call its `/notes` route. Check an upload and a download link once, because presigned file transfer is the one part the local tests cannot exercise.
+3. Teacher page: open one test student and switch **Class storage** on, deploy the kit's sample backend as that student and call its `/notes` route. Check an upload and a download link once, because presigned file transfer is the one part the local tests cannot exercise.
 4. Do not set `StorageEnabled` back to `false` while students hold data: the table is retained but nothing serves it.
 
 Rotate: create a new management key, update the secret (the functions re-read it within 5 minutes), delete the old key at OpenRouter. The keys the platform makes are named `student:<slug>`.

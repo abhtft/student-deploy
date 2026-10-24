@@ -394,7 +394,7 @@ try:
             return status, data
 
         check("STORAGE: no key is refused", sapi("GET", "/v1/data/n/x", auth=None)[0] == 401)
-        check("STORAGE: a key with the wrong secret is refused", sapi("GET", "/v1/data/n/x", auth=key[:-2] + "zz")[0] == 401)
+        check("STORAGE: a key with the wrong secret is refused", sapi("GET", "/v1/data/n/x", auth=key.split(".")[0] + "." + "A" * 32)[0] == 401)
         check("STORAGE: another student's name with this secret is refused", sapi("GET", "/v1/data/n/x", auth="cs_somebody-else." + key.split(".", 1)[1])[0] == 401)
         s, b = sapi("PUT", "/v1/data/live/a", {"value": {"hello": "world", "n": [1, 2]}})
         check("STORAGE: put a record through the real API", s == 200 and b["id"] == "a", (s, b))
@@ -440,14 +440,46 @@ try:
         check("STORAGE: delete removes the file", sapi("DELETE", "/v1/files/live.txt")[0] == 200 and sapi("GET", "/v1/files")[1]["files"] == [])
         check("STORAGE: the site's own address never serves userdata/", site(f"/userdata/{SLUG}/live.txt")[0] in (403, 404))
 
+        # the teacher's tools, run here with the platform's own code on the real table and bucket
+        dyn = boto3.resource("dynamodb", region_name="us-east-1").Table(DATA_TABLE)
+        rows = lambda: dyn.scan(FilterExpression="begins_with(s, :p)", ExpressionAttributeValues={":p": f"{SLUG}#"})["Items"]  # noqa: E731
+        check("STORAGE: the student's collections are remembered for clearing", len(table.scan(FilterExpression="begins_with(pk, :p)", ExpressionAttributeValues={":p": f"scoll#{SLUG}#"})["Items"]) >= 2)
+        sapi("PUT", "/v1/data/live/c", {"value": "to be cleared"})
+        s, up2 = sapi("POST", "/v1/files/upload-url", {"name": "gone.txt", "size": 5, "content_type": "text/plain"})
+        mine = {r["slug"]: r for r in storage_module.overview(ai_now())["students"]}.get(SLUG)
+        check("STORAGE: the overview shows this student's sizes and counts (and nothing of the content)",
+              mine and mine["enabled"] and mine["usage"]["items"] >= 3 and "to be cleared" not in json.dumps(mine), mine)
+        check("STORAGE: the overview lists no other student's key or data", "cs_" not in json.dumps(storage_module.overview(ai_now())))
+        before = len(rows())
+        done = storage_module.clear(portal.db().get(f"tok#{tid}"), "data", ai_now())
+        check("STORAGE: clearing data deletes every record of the student from the real table", done["items"] == before and rows() == [] and done["files"] == 0, (done, before, len(rows())))
+        check("STORAGE: and puts the counters back to zero", portal.db().get(f"sbytes#{SLUG}")["count"] == 0 and portal.db().get(f"sitems#{SLUG}")["count"] == 0)
+        check("STORAGE: the student's key still works after a clear", sapi("PUT", "/v1/data/live/again", {"value": 1})[0] == 200 and sapi("GET", "/v1/data/live/a")[0] == 404)
+        s3c = boto3.client("s3", region_name="us-east-1")
+        s3c.put_object(Bucket=BUCKET, Key=f"userdata/{SLUG}/clearme.txt", Body=b"x")
+        done = storage_module.clear(portal.db().get(f"tok#{tid}"), "files", ai_now())
+        check("STORAGE: clearing files deletes the student's files from the real bucket", done["files"] >= 1 and sapi("GET", "/v1/files")[1]["files"] == [], done)
+        # the portal function's role may find and delete items, and nothing more on that table
+        try:
+            iam = boto3.client("iam")
+            role_arn = iam.get_role(RoleName=cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="DeployFunctionRole")["StackResourceDetail"]["PhysicalResourceId"])["Role"]["Arn"]
+            table_arn = boto3.client("dynamodb", region_name="us-east-1").describe_table(TableName=DATA_TABLE)["Table"]["TableArn"]
+            verdict = {r["EvalActionName"]: r["EvalDecision"] for r in iam.simulate_principal_policy(
+                PolicySourceArn=role_arn, ActionNames=["dynamodb:Query", "dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan"],
+                ResourceArns=[table_arn])["EvaluationResults"]}
+            check("STORAGE: the portal function may find and delete a student's items", all(verdict[a] == "allowed" for a in ("dynamodb:Query", "dynamodb:BatchWriteItem", "dynamodb:DeleteItem")), verdict)
+            check("STORAGE: and may NOT read, write or scan them", all(verdict[a] != "allowed" for a in ("dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan")), verdict)
+        except ClientError as e:
+            log("SKIP the IAM simulation:", e.response["Error"].get("Code"))
+
         view = api("GET", "/api/student/storage", session=session)[1]
-        check("STORAGE: the student's view shows usage without any key", view["token"]["storage"]["usage"]["items"] >= 3 and "cs_" not in json.dumps(view), view["token"]["storage"])
+        check("STORAGE: the student's view shows usage without any key", view["token"]["storage"]["usage"]["items"] >= 1 and "cs_" not in json.dumps(view), view["token"]["storage"])
         item = storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"enabled": False}, ai_now())
         check("STORAGE: switching off stops the API at once", sapi("GET", "/v1/data/live/a")[0] == 403)
         cfg = lam.get_function_configuration(FunctionName=f"sd-{SLUG}")
         check("STORAGE: switching off removes the variables from the function", "CLASS_STORAGE_KEY" not in (cfg.get("Environment") or {}).get("Variables", {}))
         storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"enabled": True}, ai_now())
-        check("STORAGE: switching on again brings the same data back", sapi("GET", "/v1/data/live/a")[1].get("value") == {"hello": "world", "n": [1, 2]})
+        check("STORAGE: switching on again brings the same data back", sapi("GET", "/v1/data/live/again")[1].get("value") == 1)
         storage_module.set_storage(portal.db().get(f"tok#{tid}"), {"ops_limit": 0}, ai_now())
         check("STORAGE: an allowance of 0 refuses with allowance_used", sapi("GET", "/v1/data/live/a")[1].get("error") == "allowance_used")
 finally:

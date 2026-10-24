@@ -542,6 +542,12 @@ Resources:
             - Effect: Allow # the key lookup and the counters live in the tokens table
               Action: [dynamodb:GetItem, dynamodb:UpdateItem]
               Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow # the list of a student's collection names (scoll#...) is the only thing it may create or delete there
+              Action: [dynamodb:PutItem, dynamodb:DeleteItem]
+              Resource: !GetAtt TokensTable.Arn
+              Condition:
+                ForAllValues:StringLike:
+                  dynamodb:LeadingKeys: ['scoll#*']
             - Effect: Allow
               Action: [dynamodb:GetItem, dynamodb:PutItem, dynamodb:DeleteItem, dynamodb:Query]
               Resource: !GetAtt StudentDataTable.Arn
@@ -664,6 +670,7 @@ Resources:
       Environment:
         Variables:
           STORAGE_URL: !If [UseStorage, !Sub 'https://${StorageApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}', '']
+          DATA_TABLE: !If [UseStorage, !Ref StudentDataTable, '']
       Policies:
         - Statement:
             - Effect: Allow
@@ -715,6 +722,12 @@ Resources:
               - Effect: Allow
                 Action: secretsmanager:GetSecretValue
                 Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AiSecretName}-??????'
+              - !Ref AWS::NoValue
+            - !If # class storage: the teacher's "clear this student's data" needs to find and delete a student's items (nothing else, no reads of values)
+              - UseStorage
+              - Effect: Allow
+                Action: [dynamodb:Query, dynamodb:BatchWriteItem, dynamodb:DeleteItem]
+                Resource: !GetAtt StudentDataTable.Arn
               - !Ref AWS::NoValue
             - Effect: Allow # hand the sandbox role (and only that role) to Lambda
               Action: iam:PassRole

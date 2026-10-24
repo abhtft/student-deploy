@@ -13,6 +13,9 @@ itself, so one student can never name another student's data. Nothing is shared 
   files  S3 userdata/<slug>/<name>, up to 5 MB each, a total cap and a file-count cap (counted by listing, so nothing can drift)
   ops    every storage call counts against an allowance per day, month or in total (atomic, like the backend run allowance)
 
+The teacher can also clear a student's data and files and see storage across the class (overview, clear); nothing here ever shows the
+teacher what a student stored, only sizes and counts.
+
 Cost is bounded by these caps: the table is on-demand (an idle app costs nothing), the data is small, the allowance stops loops.
 """
 import json
@@ -33,6 +36,7 @@ MAX_VALUE_BYTES = 64 * 1024
 MAX_ITEMS = 5000
 MAX_FILE_BYTES = 5 * MB
 MAX_FILES = 100
+MAX_COLLECTIONS = 50  # collection names a student may ever use (each is remembered so the teacher can clear them)
 DEFAULT_DATA_MB, MAX_DATA_MB = 5, 100
 DEFAULT_FILES_MB, MAX_FILES_MB = 50, 500
 DEFAULT_OPS, MAX_OPS = 10_000, 1_000_000
@@ -198,6 +202,12 @@ class MemoryData:
         old = self.rows.pop((part, key), None)
         return dict(old) if old else None
 
+    def delete_partition(self, part):
+        gone = [k for (p, k) in self.rows if p == part]
+        for k in gone:
+            del self.rows[(part, k)]
+        return len(gone)
+
     def query(self, part, after, limit):
         keys = sorted(k for (p, k) in self.rows if p == part and (after is None or k > after))
         return [dict(self.rows[(part, k)], id=k) for k in keys[:limit]]
@@ -216,6 +226,20 @@ class DynamoData:
 
     def delete(self, part, key):
         return self.table.delete_item(Key={"s": part, "id": key}, ReturnValues="ALL_OLD").get("Attributes")
+
+    def delete_partition(self, part):
+        """Delete every item of one partition (a student's collection). Returns how many."""
+        from boto3.dynamodb.conditions import Key
+        count, kwargs = 0, {"KeyConditionExpression": Key("s").eq(part), "ProjectionExpression": "#s, #i", "ExpressionAttributeNames": {"#s": "s", "#i": "id"}}
+        while True:
+            page = self.table.query(**kwargs)
+            with self.table.batch_writer() as batch:
+                for row in page.get("Items", []):
+                    batch.delete_item(Key={"s": row["s"], "id": row["id"]})
+                    count += 1
+            if "LastEvaluatedKey" not in page:
+                return count
+            kwargs["ExclusiveStartKey"] = page["LastEvaluatedKey"]
 
     def query(self, part, after, limit):
         from boto3.dynamodb.conditions import Key
@@ -268,6 +292,22 @@ def _check(pattern, value, what):
     return value
 
 
+REMEMBER_SECONDS = 60  # a container trusts its own memory for this long, so a list deleted elsewhere is rebuilt within a minute
+_known = {}  # (slug, collection) -> until when this container may skip the check
+
+
+def remember_collection(slug, collection, now):
+    """Keep a list of the collection names a student has used, so clearing can find every partition without scanning the data table.
+    One small item per name, created once; at most MAX_COLLECTIONS names per student."""
+    if _known.get((slug, collection), 0) > now:
+        return
+    if db().put({"pk": f"scoll#{slug}#{collection}", "updated_at": int(now)}, if_absent=True):
+        if db().counter_add(f"scollcount#{slug}", 1, limit=MAX_COLLECTIONS, now=now) is None:
+            db().delete(f"scoll#{slug}#{collection}")
+            raise ApiError(413, "quota_exceeded", f"You can use up to {MAX_COLLECTIONS} different collection names.")
+    _known[(slug, collection)] = int(now) + REMEMBER_SECONDS
+
+
 def put_value(item, collection, key, value, now):
     _check(NAME_RE, collection, "collection (lowercase letters, digits, - and _, up to 40)")
     _check(ID_RE, key, "id (letters, digits, . - _, up to 128)")
@@ -276,6 +316,7 @@ def put_value(item, collection, key, value, now):
     if size > MAX_VALUE_BYTES:
         raise ApiError(413, "too_large", f"A value can be up to {MAX_VALUE_BYTES // 1024} KB (this one is {size // 1024 + 1} KB).")
     slug, part = item["slug"], f"{item['slug']}#{collection}"
+    remember_collection(slug, collection, now)
     cost = size + len(key)
     old = data().get(part, key)
     delta = cost - int(old["n"]) if old else cost
@@ -395,3 +436,69 @@ def file_delete(item, name):
     _check(FILE_RE, name, "file name")
     backends.client("s3").delete_object(Bucket=os.environ["BUCKET"], Key=_folder(item) + name)
     return {"deleted": True}
+
+
+# ====================== teacher tools: overview and clearing (sizes and counts only, never the content) ======================
+def _folder_totals():
+    """Count and size of every student's files in ONE listing of userdata/ -> {slug: {"count", "bytes"}}."""
+    s3, totals, token = backends.client("s3"), {}, None
+    while True:
+        args = {"Bucket": os.environ["BUCKET"], "Prefix": "userdata/", "MaxKeys": 1000}
+        if token:
+            args["ContinuationToken"] = token
+        page = s3.list_objects_v2(**args)
+        for o in page.get("Contents", []):
+            parts = o["Key"].split("/", 2)
+            if len(parts) == 3 and parts[2]:
+                entry = totals.setdefault(parts[1], {"count": 0, "bytes": 0})
+                entry["count"] += 1
+                entry["bytes"] += int(o["Size"])
+        token = page.get("NextContinuationToken")
+        if not token:
+            return totals
+
+
+def overview(now):
+    """The teacher's picture of storage across the class: per student, plus totals. Students who never used it are left out."""
+    if not available():
+        raise PortalError(503, "The class storage connector is not set up on this server.")
+    folders, students = _folder_totals(), []
+    for item in sorted(db().list_prefix("tok#"), key=lambda i: i["slug"]):
+        s = settings(item)
+        used = usage(item, now)
+        files = folders.get(item["slug"], {"count": 0, "bytes": 0})
+        holds = used["data_bytes"] > 0 or files["bytes"] > 0
+        if not (s.get("enabled") or s.get("key") or holds):
+            continue
+        status = portal.status_of(item, now)
+        students.append({
+            "id": item["id"], "slug": item["slug"], "student_name": item.get("student_name", ""), "status": status, "enabled": bool(s.get("enabled")),
+            "limits": limits(item), "usage": used, "files": files, "holds_data": holds,
+            # still holding data although the student can no longer use it: worth clearing
+            "inactive": holds and (status in ("revoked", "offline") or not s.get("enabled")),
+        })
+    totals = {"students": len(students), "enabled": sum(1 for r in students if r["enabled"]), "inactive_with_data": sum(1 for r in students if r["inactive"]),
+              "data_bytes": sum(r["usage"]["data_bytes"] for r in students), "items": sum(r["usage"]["items"] for r in students),
+              "files": sum(r["files"]["count"] for r in students), "files_bytes": sum(r["files"]["bytes"] for r in students)}
+    return {"students": students, "totals": totals}
+
+
+def clear(item, scope, now):
+    """Delete a student's stored data, files, or both. Counters go back to zero. The key, the switch and the caps stay as they are.
+    Files live in a versioned bucket, so a deleted file can still be restored by the owner for 30 days (docs/END_TO_END.md, 4.5b)."""
+    if not available():
+        raise PortalError(503, "The class storage connector is not set up on this server.")
+    if scope not in ("data", "files", "all"):
+        raise PortalError(400, "scope must be data, files or all.")
+    slug, done = item["slug"], {"items": 0, "files": 0}
+    if scope in ("data", "all"):
+        for entry in db().list_prefix(f"scoll#{slug}#"):
+            done["items"] += data().delete_partition(f"{slug}#{entry['pk'].split('#', 2)[2]}")
+        db().put({"pk": f"sbytes#{slug}", "count": 0, "updated_at": int(now)})
+        db().put({"pk": f"sitems#{slug}", "count": 0, "updated_at": int(now)})
+    if scope in ("files", "all"):
+        s3 = backends.client("s3")
+        for f in list_files(item):
+            s3.delete_object(Bucket=os.environ["BUCKET"], Key=_folder(item) + f["name"])
+            done["files"] += 1
+    return done
