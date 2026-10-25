@@ -33,7 +33,7 @@ const inKit = !packageInfo && existsSync(join(here, '..', 'platform.json')) && h
 const flagRoot = option('--root') ? resolve(option('--root')) : null;
 let editorRoot = null; // the folder the editor says is open (filled in from the client's "roots", see below)
 const MAX_OUTPUT = 8000;
-const DEFAULT_PORTAL = 'https://deploy.margdarshakss.com';
+const DEFAULT_PORTAL = 'https://deploy.example.edu';
 
 const versionOf = () => {
   if (packageInfo) return packageInfo.version;

@@ -88,7 +88,7 @@ try {
   assert.equal(createHash('sha256').update(served).digest('hex'), info.sha256, 'the version file carries the tarball hash');
   assert.deepEqual(Buffer.from(await (await fetch(`${base}/class-platform-mcp.tgz`)).arrayBuffer()), served, 'the alias is the newest copy');
   const { buildMcpPackage } = await import(pathToFileURL(join(repo, 'starter', 'build-mcp-package.mjs')).href);
-  assert.equal(buildMcpPackage(join(work, 'again.tgz')).sha256, info.sha256, 'building twice gives the same bytes');
+  assert.equal(buildMcpPackage(join(work, 'again.tgz'), { portalUrl: base }).sha256, info.sha256, 'building twice gives the same bytes');
   say('the package is served with its version file and hash, and builds to the same bytes every time');
 
   const via = spawnSync(`npx -y ${url} version`, { env, encoding: 'utf8', shell: true, cwd: work });

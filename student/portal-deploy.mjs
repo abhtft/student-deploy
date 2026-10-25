@@ -23,7 +23,7 @@ import { spawnSync } from 'node:child_process';
 import { deflateRawSync } from 'node:zlib';
 
 // Teacher: the portal address of your class (override with PORTAL_URL).
-const PORTAL_URL = (process.env.PORTAL_URL || 'https://deploy.margdarshakss.com').replace(/\/$/, '');
+const PORTAL_URL = (process.env.PORTAL_URL || 'https://deploy.example.edu').replace(/\/$/, '');
 const BACKEND_ENTRIES = ['index.mjs', 'index.js', 'app.py'];
 const JUNK = /(^|\/)(\.DS_Store|Thumbs\.db|__MACOSX|\.git|__pycache__)(\/|$)|\.py[co]$/;
 const READY_TIMEOUT_MS = Number(process.env.PORTAL_READY_TIMEOUT_MS || 120000);

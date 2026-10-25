@@ -15,6 +15,7 @@ import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, 
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyPortal } from './portal-url.mjs';
 import { zipEntries } from './zip.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -41,7 +42,7 @@ function listFiles(dir) {
   });
 }
 
-export function buildKit(out, { force = false } = {}) {
+export function buildKit(out, { force = false, portalUrl = '' } = {}) {
   out = resolve(out);
   if (existsSync(out) && readdirSync(out).length) {
     if (!force) throw new Error(`${out} is not empty. Use --force to replace its contents.`);
@@ -74,7 +75,8 @@ export function buildKit(out, { force = false } = {}) {
     const data = readFileSync(file);
     if (data.includes(0)) continue; // binary
     const text = data.toString('utf8');
-    if (text.includes('\r\n')) writeFileSync(file, text.replace(/\r\n/g, '\n'));
+    const fixed = applyPortal(text.replace(/\r\n/g, '\n'), portalUrl); // the real portal address replaces the source placeholder
+    if (fixed !== text) writeFileSync(file, fixed);
   }
 
   const platform = JSON.parse(readFileSync(join(out, 'platform.json'), 'utf8'));
@@ -87,11 +89,11 @@ export function buildKit(out, { force = false } = {}) {
 }
 
 /** Build the kit and write it as ONE zip file (deterministic: the same kit always gives the same bytes). Returns {version, sha256, files}. */
-export function buildKitZip(zipFile) {
+export function buildKitZip(zipFile, { portalUrl = '' } = {}) {
   const temp = mkdtempSync(join(tmpdir(), 'kit-zip-'));
   try {
     const kit = join(temp, 'kit');
-    const { version, minKit, scripts } = buildKit(kit);
+    const { version, minKit, scripts } = buildKit(kit, { portalUrl });
     const entries = listFiles(kit).map((f) => ({ name: relative(kit, f).split(sep).join('/'), data: readFileSync(f) }));
     const zip = zipEntries(entries);
     mkdirSync(dirname(resolve(zipFile)), { recursive: true });

@@ -10,7 +10,7 @@ rules. Follow them exactly: the app is checked by `npm run check` before every d
 |---|---|
 | Frontend | A **static website** built from `frontend/` (React + Vite + TypeScript by default). The platform publishes the build output (`dist/`). |
 | Backend | **One function** in `backend/`: Python 3.12 (`app.py`) **or** Node 22 (`index.mjs`). No server process, no framework that listens on a port. |
-| Address | The site is `https://<name>.margdarshakss.com`. The backend is reached at **`/api/...` on the same address** (the `/api` prefix is removed before your function sees the path). No CORS needed. |
+| Address | The site is served at the address `deploy` prints after each deploy. The backend is reached at **`/api/...` on the same address** (the `/api` prefix is removed before your function sees the path). No CORS needed. |
 | Class AI | The teacher can switch on an AI key for the student's backend. The helper `class_ai` makes the call in one line. |
 | Class storage | The teacher can switch on a small database and file area for the student's backend. The helper `class_storage` saves and reads data in one line. |
 | Deploy | Two ways, same result. **From the computer:** `npm run login` once, then `npm run deploy` (no GitHub needed). **From GitHub:** push to `main` and a GitHub Action runs `npm run check`, then deploys. |

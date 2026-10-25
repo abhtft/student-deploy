@@ -15,7 +15,7 @@ import { createInterface } from 'node:readline/promises';
 import { parseJsonc } from './jsonc.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
-const DEFAULT_PORTAL = 'https://deploy.margdarshakss.com';
+const DEFAULT_PORTAL = 'https://deploy.example.edu';
 const NAME = 'class-platform';
 
 const packageVersion = () => { try { return JSON.parse(readFileSync(join(here, 'package.json'), 'utf8')).version; } catch { return '0.0.0'; } };

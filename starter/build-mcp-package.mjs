@@ -17,6 +17,7 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { gzipSync } from 'node:zlib';
 import { buildKitZip } from './build-kit.mjs';
+import { applyPortal } from './portal-url.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..');
@@ -46,11 +47,11 @@ export function tarEntries(entries) {
   return Buffer.concat(blocks);
 }
 
-export function buildMcpPackage(outFile) {
+export function buildMcpPackage(outFile, { portalUrl = '' } = {}) {
   const temp = mkdtempSync(join(tmpdir(), 'mcp-package-'));
   try {
     const kitZip = join(temp, 'kit.zip');
-    const kit = buildKitZip(kitZip);
+    const kit = buildKitZip(kitZip, { portalUrl });
     const text = (path) => readFileSync(join(repo, path));
     const files = {
       'package.json': text('starter/mcp/package.json'),
@@ -64,7 +65,7 @@ export function buildMcpPackage(outFile) {
       'zip.mjs': text('starter/zip.mjs'),
       'kit.zip': readFileSync(kitZip),
     };
-    const lf = (buffer) => Buffer.from(buffer.toString('utf8').replace(/\r\n/g, '\n')); // same bytes on every computer
+    const lf = (buffer) => Buffer.from(applyPortal(buffer.toString('utf8').replace(/\r\n/g, '\n'), portalUrl)); // same bytes on every computer
     const entries = Object.keys(files).sort().map((name) => ({ name: `package/${name}`, data: name.endsWith('.zip') ? files[name] : lf(files[name]) }));
     const tgz = gzipSync(tarEntries(entries), { level: 9 });
     mkdirSync(dirname(resolve(outFile)), { recursive: true });

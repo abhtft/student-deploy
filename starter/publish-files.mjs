@@ -17,10 +17,10 @@ import { buildMcpPackage } from './build-mcp-package.mjs';
 export function buildPublishFiles(dir, portalUrl) {
   const base = String(portalUrl).replace(/\/$/, '');
   mkdirSync(dir, { recursive: true });
-  const kit = buildKitZip(join(dir, 'starter-kit.zip'));
+  const kit = buildKitZip(join(dir, 'starter-kit.zip'), { portalUrl: base });
   writeFileSync(join(dir, 'kit-version.json'), `${JSON.stringify({ kit: 'class-platform-starter', kitVersion: kit.version, minKit: kit.minKit, scripts: kit.scripts, zipSha256: kit.sha256, files: kit.files }, null, 2)}\n`);
   const pinned = `class-platform-mcp-${buildMcpPackageVersion()}.tgz`;
-  const pack = buildMcpPackage(join(dir, pinned));
+  const pack = buildMcpPackage(join(dir, pinned), { portalUrl: base });
   copyFileSync(join(dir, pinned), join(dir, 'class-platform-mcp.tgz'));
   writeFileSync(join(dir, 'mcp-version.json'), `${JSON.stringify({ version: pack.version, url: `${base}/${pinned}`, alias: `${base}/class-platform-mcp.tgz`, sha256: pack.sha256, kitVersion: pack.kitVersion }, null, 2)}\n`);
   return { files: ['starter-kit.zip', 'kit-version.json', pinned, 'class-platform-mcp.tgz', 'mcp-version.json'], kitVersion: kit.version, mcpVersion: pack.version };

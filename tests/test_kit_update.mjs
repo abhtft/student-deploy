@@ -42,7 +42,7 @@ const platformAsync = (dir, ...args) => new Promise((resolve) => {
 });
 const fresh = (name) => {
   const dir = join(work, name);
-  buildKit(dir);
+  buildKit(dir, { portalUrl: portal });
   return dir;
 };
 /** Make the project look like an OLDER kit: a managed file differs from the portal's, and its installed hash says so. */
