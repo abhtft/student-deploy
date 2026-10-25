@@ -1107,7 +1107,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
   "kitVersion": "1.6.0",
   "mcpPackage": { "version": "1.0.0" },
-  "testSteps": 36,
+  "testSteps": 37,
   "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx", "storage-errors"]
 }
 ```

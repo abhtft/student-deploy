@@ -332,12 +332,28 @@ async function toggleAi(t) {
 
 async function editAi(t) {
   const a = t.ai;
+  const gemini = (a.providers || []).includes('gemini');
+  const fields = [{ name: 'limit_usd', label: 'Spending cap (USD)', type: 'number', value: a.limit_usd, min: 0.01, max: 20, step: 0.01, required: true },
+    { name: 'period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: a.period }];
+  if (gemini) {
+    fields.push({ name: 'service', label: 'AI service', value: `${a.provider}:${a.provider === 'gemini' ? a.model : ''}`,
+      options: [['openrouter:', 'OpenRouter (model below)'], ...a.gemini_models.map((m) => [`gemini:${m}`, `Gemini: ${m}`])] });
+  }
+  fields.push({ name: 'model', label: gemini ? 'OpenRouter model (empty = class default; ignored for Gemini)' : 'Model (empty = class default)',
+    value: a.provider === 'gemini' ? '' : a.model, placeholder: 'anthropic/claude-haiku-5.5', maxlength: 80 });
   const r = await ask({ title: `AI allowance for ${t.slug}`,
-    text: `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Usage is counted a few seconds late.`,
-    fields: [{ name: 'limit_usd', label: 'Spending cap (USD)', type: 'number', value: a.limit_usd, min: 0.01, max: 20, step: 0.01, required: true },
-      { name: 'period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: a.period },
-      { name: 'model', label: 'Model (empty = class default)', value: a.model, placeholder: 'anthropic/claude-haiku-5.5', maxlength: 80 }], confirm: 'Save' });
-  if (r) act(`/api/admin/tokens/${t.id}/ai`, { limit_usd: Number(r.limit_usd), period: r.period, model: r.model.trim() }, 'AI allowance saved');
+    text: a.provider === 'gemini' || gemini
+      ? `Used so far: ${usd(a.used_usd)}. OpenRouter enforces its cap itself; for Gemini the platform counts the cost of every answer (an answer already under way can overshoot the cap by one answer). Switching service gives the student a new key setup automatically and stops the old one.`
+      : `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Usage is counted a few seconds late.`,
+    fields, confirm: 'Save' });
+  if (!r) return;
+  const body = { limit_usd: Number(r.limit_usd), period: r.period, model: r.model.trim() };
+  if (gemini) {
+    const [provider, model] = r.service.split(':');
+    body.provider = provider;
+    body.model = provider === 'gemini' ? model : r.model.trim();
+  }
+  act(`/api/admin/tokens/${t.id}/ai`, body, 'AI allowance saved');
 }
 
 async function toggleBackend(t) {

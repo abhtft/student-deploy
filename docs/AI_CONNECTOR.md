@@ -301,3 +301,28 @@ Manual 5-minute check: teacher **AI: on** for a student with Backend on; the stu
 | `lambda/portal.py` | the `ai` block in the token view, the two routes, lifecycle hooks, the sweeper call |
 | `web/teacher.js`, `web/backend.js`, `web/common.js` | teacher controls, student card and meter, dollar formatting |
 | `template.yaml` | parameters `AiEnabled`, `AiSecretName`, `AiDefaultModel`, `AiDefaultLimitUsd`; the one secret statement; timeouts |
+
+## 12. Gemini as a second provider (optional)
+
+The teacher can give a student **Google Gemini** instead of OpenRouter, per student, from the same **AI allowance** dialog (field "AI service": OpenRouter or `gemini-3.5-flash-lite`, the one Gemini model). For a student who never had AI, **Gemini is the default** when the server offers it; students already on OpenRouter stay there. It is off unless the stack is deployed with `AiGeminiEnabled=true`.
+
+**Why a proxy.** OpenRouter can mint a capped key per student; Google cannot. So the platform's Google key is never given to a student. Instead:
+
+```
+student function --Bearer ga_<slug>.<secret>--> AI proxy API --> ai_proxy.py --Google key from Secrets Manager--> Gemini
+```
+
+| | |
+|---|---|
+| What the student's function gets | The same three variables as before: `OPENAI_API_KEY` (a private `ga_` key, useless anywhere else), `OPENAI_BASE_URL` (the proxy address plus `/v1`), `AI_MODEL`. Student code does not change |
+| What the proxy checks on every call | Key (constant time), token active, teacher switch on, provider is Gemini, cap not yet reached. Then it forces the teacher's model, drops unknown request fields, caps output at 8,192 tokens (2,048 if the student gave none) and refuses `stream` and `n > 1` |
+| The cap | Counted by the platform in an atomic counter per student and period (`aiu#<slug>#<period>`). The cost of an answer is added **after** the call, so the last answer can overshoot the cap by one answer; the output cap bounds that |
+| Cost of an answer | `prompt * price_in + output * price_out` micro-dollars (one micro-dollar per token equals one dollar per million tokens). Gemini bills hidden "thinking" tokens as output; they are in `total_tokens` but not in `completion_tokens`, so output = total - prompt |
+| Prices | Built into `lambda/gemini.py` (flash-lite 0.30 input / 2.50 output USD per million tokens). Override or add models with the `AI_GEMINI_PRICES` environment variable, for example `{"gemini-3.5-flash-lite": [0.3, 2.5]}` |
+| The Google key | Field `GOOGLE_API_KEY` in the same Secrets Manager secret as the OpenRouter keys (`AiSecretName`). Only `AiProxyFunction` may read it besides the existing readers; never a student function |
+| Switching provider | Moving a student to Gemini disables their OpenRouter key (and keeps it disabled in the daily sweep); moving back re-enables it. The model resets to the new provider's default. Their `ga_` key is kept, so switching on again restores it |
+| Errors a student sees | OpenAI-shaped: 401 `invalid_api_key`, 403 `token_inactive` / `not_enabled`, 429 `insufficient_quota` (allowance used), 400 `stream_not_supported`, 502 `provider_error` (carries no key) |
+
+**Turning it on (owner):** the `openrouter` secret already needs `GOOGLE_API_KEY` in it, then deploy with `AiEnabled=true BackendEnabled=true AiGeminiEnabled=true` (review the change set: it adds `AiProxyApi`, `AiProxyFunction` and gives the portal function `AI_PROXY_URL`), then `node admin.mjs portal-publish`.
+
+**Tests:** `tests/test_ai_gemini.py` (switch, proxy, caps, cost, lifecycle, provider moves, no key in any response) and `tests/test_template_gemini.py` (off by default, one secret, narrow rights, own throttled API).

@@ -76,6 +76,13 @@ await step('class AI connector: capped keys, function environment, lifecycle, fa
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('class AI with Gemini: provider switch, private-key proxy, forced model, caps, thinking-token cost, lifecycle; template guards', () => {
+  for (const test of ['test_ai_gemini.py', 'test_template_gemini.py']) {
+    const r = spawnSync(python, [join(here, test)], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${test}: ${r.stderr || r.stdout}`);
+  }
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

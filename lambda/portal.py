@@ -12,7 +12,7 @@ Teacher (password -> signed session, 8 h):
   POST /api/admin/tokens/{id}/deny       {reason?}
   POST /api/admin/tokens/{id}/domain-access   {enabled}   switch custom domains on/off for a student
   POST /api/admin/tokens/{id}/backend    {enabled?, runs_limit?, runs_period?}   backend on/off and run allowance
-  POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?}   class AI connector (ai.py); {} refreshes usage
+  POST /api/admin/tokens/{id}/ai         {enabled?, limit_usd?, period?, model?, provider? (openrouter|gemini)}   class AI connector (ai.py); {} refreshes usage
   POST /api/admin/tokens/{id}/storage    {enabled?, data_mb?, files_mb?, ops_limit?, ops_period?}   class storage connector (storage.py)
   POST /api/admin/tokens/{id}/storage/clear   {scope: data | files | all}   delete a student's stored data and/or files
   GET  /api/admin/storage                storage across the class: per student sizes and counts, totals (never the content)

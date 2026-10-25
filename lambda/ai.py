@@ -11,17 +11,20 @@ of any API view. Money is kept as integers (DynamoDB has no floats) and shown in
 """
 import os
 import re
+import secrets
 import time
 
 from botocore.exceptions import ClientError
 
 import backends
+import gemini
 import openrouter
 import portal
 from portal import PortalError, db
 
 AI_ENV_NAMES = ("OPENAI_API_KEY", "OPENAI_BASE_URL", "AI_MODEL")
 PERIODS = ("day", "month", "total")
+PROVIDERS = ("openrouter", "gemini")
 MICRO = 1_000_000
 MIN_LIMIT_USD, MAX_LIMIT_USD = 0.01, 20.0
 MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/~-]{0,79}$")
@@ -34,6 +37,51 @@ def available():
 
 def default_model():
     return os.environ.get("AI_DEFAULT_MODEL", "anthropic/claude-haiku-5.5")
+
+
+def proxy_url():
+    return os.environ.get("AI_PROXY_URL", "").rstrip("/")
+
+
+def gemini_available():
+    """Gemini needs the platform's own proxy (Google has no per-student keys); see gemini.py and ai_proxy.py."""
+    return available() and os.environ.get("AI_GEMINI_ENABLED", "") == "true" and bool(proxy_url())
+
+
+def provider(item):
+    """Gemini is the default for a student who never had AI (when the server offers it); students already on OpenRouter stay there."""
+    s = settings(item)
+    chosen = s.get("provider") or ("openrouter" if (s.get("hash") or s.get("key")) else "gemini" if gemini_available() else "openrouter")
+    return chosen if chosen in PROVIDERS else "openrouter"
+
+
+def model_of(item):
+    """The model this student gets: the teacher's choice, else the default of their provider."""
+    chosen = settings(item).get("model")
+    if provider(item) == "gemini":
+        return chosen if chosen in gemini.models() else gemini.DEFAULT_MODEL
+    return chosen or default_model()
+
+
+def limit_micro(item):
+    return int(settings(item).get("limit_micro", round(default_limit_usd() * MICRO)))
+
+
+def _usage_pk(item, now):
+    period_id, resets_at = backends.period_info(settings(item).get("period", "month"), now)
+    return f"aiu#{item['slug']}#{period_id}", resets_at
+
+
+def gemini_used_micro(item, now):
+    return int((db().get(_usage_pk(item, now)[0]) or {}).get("count", 0))
+
+
+def add_gemini_usage(item, micro, now):
+    """Add the cost of one answer (no limit here: it was already spent; the check happens before the call)."""
+    if micro <= 0:
+        return
+    pk, resets_at = _usage_pk(item, now)
+    db().counter_add(pk, micro, ttl=(resets_at + 86400) if resets_at else None, now=now)
 
 
 def default_limit_usd():
@@ -63,14 +111,18 @@ def _save(item, **fields):
 
 def is_on(item):
     s = settings(item)
-    return bool(s.get("enabled") and s.get("key"))
+    return bool(s.get("enabled") and s.get("gkey" if provider(item) == "gemini" else "key"))
 
 
 def env_for(item):
     """The variables the student's function gets, or {} when the connector is off."""
     if not (available() and is_on(item)):
         return {}
-    return {"OPENAI_API_KEY": settings(item)["key"], "OPENAI_BASE_URL": base_url(), "AI_MODEL": settings(item).get("model") or default_model()}
+    if provider(item) == "gemini":
+        if not gemini_available():
+            return {}
+        return {"OPENAI_API_KEY": settings(item)["gkey"], "OPENAI_BASE_URL": proxy_url() + "/v1", "AI_MODEL": model_of(item)}
+    return {"OPENAI_API_KEY": settings(item)["key"], "OPENAI_BASE_URL": base_url(), "AI_MODEL": model_of(item)}
 
 
 def timeout_for(item):
@@ -89,21 +141,25 @@ def view(item, now):
     s = settings(item)
     limit_micro = s.get("limit_micro", round(default_limit_usd() * MICRO))
     used_micro = int(s.get("used_micro", 0))
-    model = s.get("model") or default_model()
+    model = model_of(item)
+    gem = provider(item) == "gemini"
+    if gem:
+        used_micro = gemini_used_micro(item, now)  # our own counter: always current
     out = {
-        "available": True, "enabled": bool(s.get("enabled")), "model": model, "base_url": base_url(),
+        "available": True, "enabled": bool(s.get("enabled")), "model": model, "base_url": (proxy_url() + "/v1") if gem else base_url(),
+        "provider": provider(item), "providers": ["openrouter"] + (["gemini"] if gemini_available() else []), "gemini_models": gemini.models(),
         "limit_usd": limit_micro / MICRO, "period": s.get("period", "month"),
         "used_usd": used_micro / MICRO, "remaining_usd": max(limit_micro - used_micro, 0) / MICRO,
         "checked_at": s.get("checked_at"), "env_names": list(AI_ENV_NAMES) if s.get("enabled") else [], "timeout_seconds": student_timeout(),
-        "key_active": bool(s.get("key")) and not s.get("key_disabled", False),
+        "key_active": True if gem else bool(s.get("key")) and not s.get("key_disabled", False),
     }
-    if model == default_model() and typical_call_usd() > 0:
+    if not gem and model == default_model() and typical_call_usd() > 0:
         out["approx_calls"] = int(limit_micro / MICRO / typical_call_usd())
     return out
 
 
 # ---------- teacher ----------
-def _parse(body, current):
+def _parse(body, item):
     changes = {}
     if "enabled" in body:
         if not isinstance(body["enabled"], bool):
@@ -118,11 +174,23 @@ def _parse(body, current):
         if body["period"] not in PERIODS:
             raise PortalError(400, "period must be day, month or total.")
         changes["period"] = body["period"]
+    if "provider" in body:
+        if body["provider"] not in PROVIDERS:
+            raise PortalError(400, "provider must be openrouter or gemini.")
+        if body["provider"] == "gemini" and not gemini_available():
+            raise PortalError(503, "Gemini is not set up on this server.")
+        changes["provider"] = body["provider"]
+        if changes["provider"] != provider(item) and "model" not in body:
+            changes["model"] = ""  # a model id of one provider means nothing to the other: back to that provider's default
     if "model" in body:
         model = str(body["model"] or "").strip()
-        if model and not MODEL_RE.match(model):
+        chosen = changes.get("provider", provider(item))
+        if chosen == "gemini":
+            if model and model not in gemini.models():
+                raise PortalError(400, f"model must be one of: {', '.join(gemini.models())}.")
+        elif model and not MODEL_RE.match(model):
             raise PortalError(400, "model must be an OpenRouter model id such as anthropic/claude-haiku-5.5.")
-        changes["model"] = model  # empty means: use the platform default
+        changes["model"] = model  # empty means: use the provider's default
     return changes
 
 
@@ -132,16 +200,18 @@ def set_ai(item, body, now):
     if not available():
         raise PortalError(503, "The class AI connector is not set up on this server.")
     current = settings(item)
-    changes = _parse(body, current)
+    changes = _parse(body, item)
     if not changes:  # an empty request refreshes the usage numbers
         return refresh_usage(item, now, force=True)
     want_on = changes.get("enabled", bool(current.get("enabled")))
     limit_micro = changes.get("limit_micro", current.get("limit_micro", round(default_limit_usd() * MICRO)))
     period = changes.get("period", current.get("period", "month"))
-    desired_disabled = not (want_on and portal.status_of(item, now) == "active")
+    chosen = changes.get("provider", provider(item))
+    # the OpenRouter key works only while AI is on, the token is active AND this student uses OpenRouter
+    desired_disabled = not (want_on and chosen == "openrouter" and portal.status_of(item, now) == "active")
     try:
         key_hash = current.get("hash")
-        if want_on and not key_hash:
+        if want_on and chosen == "openrouter" and not key_hash:
             made = openrouter.create_key(f"student:{item['slug']}", limit_micro / MICRO, period)
             # Keep the new key at once, so a failure further down never leaves an orphan and a retry reuses it.
             item = _save(item, hash=made["hash"], key=made["key"], key_disabled=False, limit_micro=limit_micro, period=period)
@@ -157,6 +227,10 @@ def set_ai(item, body, now):
     except openrouter.OpenRouterError as e:
         raise PortalError(502, f"OpenRouter refused the change: {e}")
     saved = {**changes, "limit_micro": limit_micro, "period": period}
+    if want_on:
+        saved["provider"] = chosen  # remember the choice, so a later change of the server default never moves a student
+    if want_on and chosen == "gemini" and not current.get("gkey"):
+        saved["gkey"] = f"ga_{item['slug']}.{secrets.token_urlsafe(24)}"  # made once, kept while the student exists
     if key_hash:
         saved["key_disabled"] = desired_disabled
     item = _save(item, **saved)
@@ -187,6 +261,9 @@ def apply_to_function(item):
 def refresh_usage(item, now, force=False, quiet=False):
     """Read the student's usage from OpenRouter (cached for REFRESH_SECONDS). Never raises on a provider failure when quiet."""
     s = settings(item)
+    if available() and provider(item) == "gemini":  # our own counter: no provider call, always current
+        used = gemini_used_micro(item, now)
+        return item if used == int(s.get("used_micro", -1)) else _save(item, used_micro=used, checked_at=now)
     if not (available() and s.get("hash")):
         return item
     if not force and now - int(s.get("checked_at") or 0) < REFRESH_SECONDS:
@@ -209,7 +286,7 @@ def sync_lifecycle(item, now):
     s = settings(item)
     if not (available() and s.get("hash")):
         return item
-    desired_disabled = not (s.get("enabled") and portal.status_of(item, now) == "active")
+    desired_disabled = not (s.get("enabled") and provider(item) == "openrouter" and portal.status_of(item, now) == "active")
     if desired_disabled == bool(s.get("key_disabled", False)):
         return item
     try:

@@ -72,6 +72,14 @@ Parameters:
     Type: String
     Default: '0.25'
     Description: Default spending cap per student in USD, used the first time the teacher switches AI on. The teacher can edit it per student.
+  AiGeminiEnabled:
+    Type: String
+    Default: 'false'
+    AllowedValues: ['false', 'true']
+    Description: >
+      Lets the teacher give a student Google Gemini instead of OpenRouter (needs AiEnabled='true'). Google has no per-student keys, so the
+      platform runs its own OpenAI-compatible proxy that holds the Google key (field GOOGLE_API_KEY in the same secret as above), checks the
+      student's private key and enforces the cap. Off by default.
   StorageEnabled:
     Type: String
     Default: 'false'
@@ -109,6 +117,7 @@ Conditions:
   UsePortalAlias: !And [!Condition UseCustomDomain, !Equals [!Ref PortalAlias, 'true']]
   UseBackend: !Equals [!Ref BackendEnabled, 'true']
   UseAi: !Equals [!Ref AiEnabled, 'true']
+  UseGemini: !And [!Condition UseAi, !Condition UseBackend, !Equals [!Ref AiGeminiEnabled, 'true']]
   UseStorage: !And [!Condition UseBackend, !Equals [!Ref StorageEnabled, 'true']]
   UseAlerts: !Not [!Equals [!Ref AlertEmailParameter, '']]
   UseAlertsAndBackend: !And [!Condition UseAlerts, !Condition UseBackend]
@@ -136,6 +145,7 @@ Globals:
         PER_IP_PER_MINUTE: '120'
         ORIGIN_SECRET: !Select [2, !Split ['/', !Ref 'AWS::StackId']]
         AI_ENABLED: !Ref AiEnabled
+        AI_GEMINI_ENABLED: !Ref AiGeminiEnabled
         STORAGE_ENABLED: !Ref StorageEnabled
         AI_SECRET_NAME: !Ref AiSecretName
         AI_DEFAULT_MODEL: !Ref AiDefaultModel
@@ -568,6 +578,46 @@ Resources:
             Path: /{proxy+}
             Method: ANY
 
+  # ---------- Class AI proxy for Gemini ----------
+  # Its own API and function (like storage), so a busy student cannot slow the portal. Students call it with their private ga_ key; the
+  # Google key stays in Secrets Manager and is only readable by this function (and never given to a student function).
+  AiProxyApi:
+    Type: AWS::Serverless::HttpApi
+    Condition: UseGemini
+    Properties:
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 20
+        ThrottlingRateLimit: 10
+
+  AiProxyFunction:
+    Type: AWS::Serverless::Function
+    Condition: UseGemini
+    Properties:
+      CodeUri: lambda/
+      Handler: ai_proxy.handler
+      Runtime: python3.12
+      Architectures: [arm64]
+      MemorySize: 256
+      Timeout: 29 # Gemini answers take seconds; the HTTP API waits at most 30
+      Environment:
+        Variables:
+          AI_PROXY_URL: !Sub 'https://${AiProxyApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+      Policies:
+        - Statement:
+            - Effect: Allow # the key lookup and the usage counters live in the tokens table
+              Action: [dynamodb:GetItem, dynamodb:UpdateItem]
+              Resource: !GetAtt TokensTable.Arn
+            - Effect: Allow # the Google key (this one secret, nothing else)
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub 'arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${AiSecretName}-??????'
+      Events:
+        Any:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref AiProxyApi
+            Path: /{proxy+}
+            Method: ANY
+
   # ---------- Web portal (deploy.<RootDomain>) ----------
   # Static pages come from s3://bucket/portal/ (node admin.mjs portal-publish); /api/* goes to the API below.
   PortalFunction:
@@ -670,6 +720,7 @@ Resources:
       Environment:
         Variables:
           STORAGE_URL: !If [UseStorage, !Sub 'https://${StorageApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}', '']
+          AI_PROXY_URL: !If [UseGemini, !Sub 'https://${AiProxyApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}', '']
           DATA_TABLE: !If [UseStorage, !Ref StudentDataTable, '']
       Policies:
         - Statement:
@@ -1007,6 +1058,10 @@ Outputs:
     Condition: UseStorage
     Description: Class storage API (given to student functions as CLASS_STORAGE_URL)
     Value: !Sub 'https://${StorageApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
+  AiProxyUrl:
+    Condition: UseGemini
+    Description: Class AI proxy for Gemini (given to student functions as OPENAI_BASE_URL, plus /v1)
+    Value: !Sub 'https://${AiProxyApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
   StudentDataTableName:
     Condition: UseStorage
     Value: !Ref StudentDataTable
