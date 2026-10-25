@@ -73,7 +73,7 @@ ${out}`);
   assert.match(first.stdout, /Backend: packed 3 files from backend\//);
   assert.match(first.stdout, /Backend ready \(python3\.12\)/);
   assert.match(first.stdout, /Frontend: packed \d+ files from frontend[\\/]dist\//);
-  assert.match(first.stdout, /Frontend live at https:\/\/alice\.margdarshakss\.com\//);
+  assert.match(first.stdout, /Frontend live at https:\/\/alice\.example\.edu\//);
   say('the kit deploys as it is: check passes, frontend builds, backend and site published through portal-deploy.mjs');
 
   assert.deepEqual((await gateway('/health')).body, { ok: true });

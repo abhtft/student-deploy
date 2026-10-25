@@ -1,6 +1,6 @@
 """Guards the documented configuration of the multi-tenant distribution used for student custom domains.
 
-A custom domain is served by a different distribution than <slug>.margdarshakss.com, so it needs its own /api/* route to the
+A custom domain is served by a different distribution than <slug>.example.edu, so it needs its own /api/* route to the
 backend. This file once lacked it, and every POST to a custom domain got a CloudFront 403. These checks keep the documented
 target configuration complete and free of real secrets."""
 import json

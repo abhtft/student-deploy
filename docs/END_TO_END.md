@@ -33,18 +33,18 @@ A teacher gives each student a **token**. With it a student publishes their **fr
    │ run allowance (Runs…, +1,000) │                 │ add own domain   (optional, if allowed)   │
    └──────────────┬───────────────┘                 │ watch expiry bar, request regeneration     │
                   │                                  └─────────────────────┬────────────────────┘
-                  └───────────── https://deploy.margdarshakss.com ─────────┘
+                  └───────────── https://deploy.example.edu ─────────┘
                                          (the portal: /teacher and /student)
 
    Result for the student:
-     https://<slug>.margdarshakss.com            the site            (always, while the token lives)
-     https://<slug>.margdarshakss.com/api/...    the backend         (if the teacher turned Backend on)
+     https://<slug>.example.edu            the site            (always, while the token lives)
+     https://<slug>.example.edu/api/...    the backend         (if the teacher turned Backend on)
      https://www.theirdomain.com[/api/...]       the same, on their own domain (if the teacher turned Domain on)
 ```
 
 ### The four layers (each added on top of the last)
 
-1. **Static hosting** per student: files in a private S3 bucket, served by CloudFront at `<slug>.margdarshakss.com`.
+1. **Static hosting** per student: files in a private S3 bucket, served by CloudFront at `<slug>.example.edu`.
 2. **Tokens and the portal:** expiring tokens, teacher and student pages, regeneration requests, a daily sweeper.
 3. **Custom domains:** a student's own subdomain with automatic HTTPS (CloudFront multi-tenant).
 4. **Student backends:** one function per student behind a gateway, with a teacher-set on/off switch and run allowance.
@@ -62,9 +62,9 @@ The original command-line flow (a permanent key and `node deploy.mjs`) still wor
 | Storage | S3 bucket (private) | `template.yaml` | `sites/<slug>/` published sites, `uploads/` temporary zips (deleted after 1 day), `archive/<slug>/` sites taken offline, `portal/` the portal pages |
 | Data | DynamoDB `TokensTable` | `template.yaml` | token records plus locks and counters (see 2.3) |
 | Secrets | SSM parameters `/student-deploy/teacher`, `/student-deploy/keys` | `template.yaml` (initial `{}`) | teacher login (salted hash) and legacy CLI keys |
-| CDN | `Distribution` | `template.yaml` | `*.margdarshakss.com`: serves `sites/<slug>/` and routes `/api/*` to the backend |
-| CDN | `PortalDistribution` | `template.yaml` | `deploy.margdarshakss.com`: portal pages from `portal/`, `/api/*` to the portal API |
-| CDN | multi-tenant distribution `E1NTIC3LHBW49Q` | **created by hand** (outside the template) | serves students' custom domains, one tenant per domain |
+| CDN | `Distribution` | `template.yaml` | `*.example.edu`: serves `sites/<slug>/` and routes `/api/*` to the backend |
+| CDN | `PortalDistribution` | `template.yaml` | `deploy.example.edu`: portal pages from `portal/`, `/api/*` to the portal API |
+| CDN | multi-tenant distribution `<TENANT_DISTRIBUTION_ID>` | **created by hand** (outside the template) | serves students' custom domains, one tenant per domain |
 | API | `DeployApi` (HTTP API) | `template.yaml` | portal API and the legacy CLI routes |
 | API | `BackendApi` (HTTP API) | `template.yaml`, only if `BackendEnabled=true` | student backend traffic, with its own throttle |
 | Compute | `DeployFunction` (`lambda/app.py` + `portal.py`, `domains.py`, `backends.py`) | `template.yaml` | the portal API, publishing, domain and backend management |
@@ -75,14 +75,14 @@ The original command-line flow (a permanent key and `node deploy.mjs`) still wor
 
 ### 2.2 How requests travel
 
-**A. Someone opens a student's site** (`https://alice.margdarshakss.com/cart`)
+**A. Someone opens a student's site** (`https://alice.example.edu/cart`)
 ```
 Browser -> CloudFront (Distribution) -> router function: host "alice" -> /sites/alice/...,
            a path with no file extension becomes /index.html (single-page-app fallback)
         -> S3 sites/alice/index.html   (private bucket, read through an origin access control)
 ```
 
-**B. The student's page calls its backend** (`fetch('/api/analyse')` on `alice.margdarshakss.com`)
+**B. The student's page calls its backend** (`fetch('/api/analyse')` on `alice.example.edu`)
 ```
 Browser -> CloudFront /api/* behavior -> BackendRouteFunction: host -> slug, /api/analyse -> /b/alice/analyse, add x-viewer-ip
         -> BackendApi (one catch-all route /b/{slug}/{proxy+}) -> GatewayFunction
@@ -125,7 +125,7 @@ Status is **derived from time** (`expires_at`, the grace period, an `archived` f
 
 ## 3. Roles and workflows
 
-### 3.1 Teacher: daily use (`https://deploy.margdarshakss.com/teacher`)
+### 3.1 Teacher: daily use (`https://deploy.example.edu/teacher`)
 
 | Task | How |
 |---|---|
@@ -154,7 +154,7 @@ Nothing is deleted automatically: archives, functions and code stay until a huma
    - at most 2,000 files and 200 MB, with `node_modules` and `.git` never read;
    - no `node_modules`, `.git` or `.env*` in the upload;
    - file names use letters, digits, `. _ - @ + ~` only (spaces and special characters are blocked; capital letters only warn).
-4. **Upload and publish**. The site is live at `https://<slug>.margdarshakss.com/` within seconds.
+4. **Upload and publish**. The site is live at `https://<slug>.example.edu/` within seconds.
 5. **Expiry:** an amber banner appears in the last 3 days with **Request regeneration**; the teacher answers in the inbox. After expiry the student can still sign in (read-only) for 3 days.
 
 The older command-line route is unchanged: the teacher runs `node admin.mjs add <name>`, and the student runs `node deploy.mjs` with `DEPLOY_KEY` (see `student/README.md`).
@@ -205,7 +205,7 @@ Apps need to remember things. The teacher can give a student's **backend** a sma
 
 ### 3.3d Student: connecting an AI editor with one command (no kit download)
 
-`npx -y https://deploy.margdarshakss.com/class-platform-mcp.tgz setup` (needs Node). It saves the token for the whole computer, adds the class tools to VS Code and Antigravity (after showing what it will change and asking), and the student then opens an empty folder and says *set up my class project*. The Start here card on the student page has the command, an Add to VS Code link and a Copy Antigravity config button. Publishing the files that make this work is part of `node admin.mjs portal-publish` (the tarball per version, the always-newest alias and `mcp-version.json`); older tarballs are kept on purpose.
+`npx -y https://deploy.example.edu/class-platform-mcp.tgz setup` (needs Node). It saves the token for the whole computer, adds the class tools to VS Code and Antigravity (after showing what it will change and asking), and the student then opens an empty folder and says *set up my class project*. The Start here card on the student page has the command, an Add to VS Code link and a Copy Antigravity config button. Publishing the files that make this work is part of `node admin.mjs portal-publish` (the tarball per version, the always-newest alias and `mcp-version.json`); older tarballs are kept on purpose.
 
 ### 3.3c Student: deploying from the computer (no GitHub)
 
@@ -215,8 +215,8 @@ GitHub is optional. With the kit (1.3 and later): `npm run login` once (paste th
 
 Requires **Domain: on** from the teacher.
 
-1. Enter a **subdomain** such as `www.theirname.com` (a bare domain cannot hold a CNAME at most providers). `margdarshakss.com` names and AWS addresses are refused. One domain per student, and the token must be active.
-2. At their DNS provider add one `CNAME` for that name pointing to the **routing endpoint** shown in the card (`d4cls3ve04vi3.cloudfront.net`). On Cloudflare the record must be **DNS only** (grey cloud).
+1. Enter a **subdomain** such as `www.theirname.com` (a bare domain cannot hold a CNAME at most providers). `example.edu` names and AWS addresses are refused. One domain per student, and the token must be active.
+2. At their DNS provider add one `CNAME` for that name pointing to the **routing endpoint** shown in the card (`<id>.cloudfront.net`). On Cloudflare the record must be **DNS only** (grey cloud).
 3. The card advances by itself: **DNS record, HTTPS certificate, Finishing setup, Live**, usually 1 to 3 minutes after the record is visible.
 4. **Remove domain** disables the tenant, waits until it is deployed, then deletes it (the daily sweeper finishes it if the student leaves).
 
@@ -237,7 +237,7 @@ A domain keeps working if the teacher later turns the switch off; the switch onl
 
 ### 4.1 First-time setup, in order (details: `implement.md`)
 
-1. **Prerequisites:** AWS CLI logged in, SAM CLI, Node 20+, Python 3.12, an ACM certificate for `*.margdarshakss.com` in us-east-1.
+1. **Prerequisites:** AWS CLI logged in, SAM CLI, Node 20+, Python 3.12, an ACM certificate for `*.example.edu` in us-east-1.
 2. **Deploy the stack** (`sam deploy`, parameters in `samconfig.toml`). Two-phase for the portal address: deploy with `PortalAlias=false`, create the DNS record `deploy -> <PortalDistributionDomain>`, redeploy with `PortalAlias=true` (CloudFront refuses an alias whose DNS still points at another distribution, e.g. through the `*` wildcard).
 3. **DNS records** (at the DNS host): `*  CNAME -> <DistributionDomain>`; `deploy  CNAME -> <PortalDistributionDomain>`. Existing explicit records (such as `bs`) keep winning over `*`.
 4. **Teacher login:** `node admin.mjs teacher-setup <username>` (hidden password prompt; stores a salted scrypt hash in SSM). Never edit the `TeacherAccount` resource in the template: an update resets it.
@@ -279,11 +279,11 @@ These were created with the CLI and are **not** recreated by `sam deploy` or rem
 
 | Thing | Value |
 |---|---|
-| Multi-tenant distribution (template for tenants) | `E1NTIC3LHBW49Q` (`custom-domain/tenant-distribution.json`) |
+| Multi-tenant distribution (template for tenants) | `<TENANT_DISTRIBUTION_ID>` (`custom-domain/tenant-distribution.json`) |
 | Function: SPA fallback | `student-hosting-spa-fallback` (`custom-domain/spa-fallback.js`) |
 | Function: tenant `/api` route | `student-hosting-tenant-api` (`custom-domain/tenant-api-route.js`) |
-| Connection group routing endpoint | `d4cls3ve04vi3.cloudfront.net` |
-| Origin access control for the tenants | `E35NKLYVBXWXX4` |
+| Connection group routing endpoint | `<id>.cloudfront.net` |
+| Origin access control for the tenants | `<ORIGIN_ACCESS_CONTROL_ID>` |
 | Tenants | one per custom domain, created and deleted by the portal at runtime |
 
 If the tenant distribution is ever recreated, redo its `/api` route with `custom-domain/apply-tenant-api-route.py` (dry run by default; saves the current config first; never prints the shared secret).
@@ -386,7 +386,7 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 
 **Manual acceptance checklist** (after any significant change):
 1. Teacher: sign in, create a token, copy the message.
-2. Student (private window): sign in, upload a build folder: checklist green, site opens at `<slug>.margdarshakss.com`.
+2. Student (private window): sign in, upload a build folder: checklist green, site opens at `<slug>.example.edu`.
 3. A folder with `my photo.png` or a source `index.html`: the button stays disabled and names the problem.
 4. Token with 2 days left: amber banner, **Request regeneration**, teacher approves with a new duration.
 5. **Take offline**: the site stops (about a minute), files appear in `archive/<slug>/`; **Extend** brings it back.
@@ -411,7 +411,7 @@ Known residual risks: a student's public `/api` can be called by anyone, so stra
 | Storage answers `allowance_used` or `quota_exceeded` | the operations allowance or a size cap is full | wait for the reset, delete data, or the teacher raises the caps |
 | "Teacher account is not set up yet" | the SSM entry is still `{}` | `node admin.mjs teacher-setup <name>` |
 | "Too many failed attempts" | 5 wrong passwords from one address | wait 15 minutes, or delete the `fail#<ip>` item |
-| Upload fails with a network error and a CORS note in the console | page opened on an address other than `https://deploy.margdarshakss.com` | use the real portal address |
+| Upload fails with a network error and a CORS note in the console | page opened on an address other than `https://deploy.example.edu` | use the real portal address |
 | Pages show old content after a change | cache | `node admin.mjs portal-publish` (it clears the cache), then hard-refresh |
 | `sam deploy` fails with `CNAMEAlreadyExists` / "DNS record points to another distribution" | wildcard DNS still points the name at another distribution | two-phase alias (4.1 step 2) |
 | Changeset fails with "Circular dependency" | a function's shared environment references a resource that depends on it | override those variables for that function (see the gateway in `template.yaml`) |

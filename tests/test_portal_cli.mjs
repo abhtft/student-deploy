@@ -48,7 +48,7 @@ try {
   check('Alice: backend and frontend both published', () => {
     assert.equal(first.status, 0, first.stdout + first.stderr);
     assert.match(first.stdout, /Backend ready \(python3\.12\)/);
-    assert.match(first.stdout, /Frontend live at https:\/\/alice\.margdarshakss\.com\/ {2}\(2 files/);
+    assert.match(first.stdout, /Frontend live at https:\/\/alice\.example\.edu\/ {2}\(2 files/);
     assert.ok(first.stdout.indexOf('Backend ready') < first.stdout.indexOf('Frontend live'), 'backend goes first');
   });
   const hello = await (await fetch(`${URL}/b/alice/hello?name=CLI`)).json();

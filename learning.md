@@ -22,14 +22,14 @@ Contents
 
 ## 1. What was built
 
-Starting point: a CLI-only system. A teacher ran `admin.mjs` to hand out permanent deploy keys; a student ran `node deploy.mjs`, which uploaded a zip through a small API into a private S3 bucket served by CloudFront at `name.margdarshakss.com`.
+Starting point: a CLI-only system. A teacher ran `admin.mjs` to hand out permanent deploy keys; a student ran `node deploy.mjs`, which uploaded a zip through a small API into a private S3 bucket served by CloudFront at `name.example.edu`.
 
 What it became, in four layers added one after another:
 
 | Layer | What it adds |
 |---|---|
 | **Token backend** | Expiring tokens in DynamoDB, a teacher login, a student login (the token *is* the login), a regeneration request flow (request, approve with a new duration, deny), and a daily sweeper that takes expired sites offline |
-| **Web portal** at `deploy.margdarshakss.com` | A teacher page (generate, extend, revoke, take offline, approve requests) and a student page (expiry bar, folder or zip upload with a pre-flight checklist) |
+| **Web portal** at `deploy.example.edu` | A teacher page (generate, extend, revoke, take offline, approve requests) and a student page (expiry bar, folder or zip upload with a pre-flight checklist) |
 | **Hosting** | A second CloudFront distribution for the portal, clean URLs, security headers, an `/api/*` route to the same Lambda |
 | **Custom domains** | A per-student teacher switch; students bring their own subdomain, add one CNAME, and get automatic HTTPS (CloudFront multi-tenant "distribution tenants") |
 
@@ -40,13 +40,13 @@ The old CLI keys still work in parallel; nothing was broken to add the portal.
 ## 2. Architecture and why it looks this way
 
 ```
-Browser ── deploy.margdarshakss.com ── CloudFront (PortalDistribution)
+Browser ── deploy.example.edu ── CloudFront (PortalDistribution)
               ├─ /*      → S3  portal/            static pages (web/)
               └─ /api/*  → API Gateway → Lambda ──┬─ DynamoDB  tokens, slug locks, domain locks, login failures
                                                   ├─ S3        uploads/, sites/<slug>/, archive/<slug>/
                                                   └─ CloudFront  cache invalidation, tenant API
 
-name.margdarshakss.com ── CloudFront (Distribution) → S3 sites/<name>/        (router function picks the folder)
+name.example.edu ── CloudFront (Distribution) → S3 sites/<name>/        (router function picks the folder)
 www.theirdomain.com    ── CloudFront multi-tenant → S3 sites/<student>/       (tenant parameter picks the folder)
 
 Daily 03:00 UTC: Sweeper Lambda → archive expired sites, finish stuck domain removals
@@ -85,7 +85,7 @@ Slugs are unique via a lock item (`slug#<name>`) written with a conditional put,
 ### Custom domains: three options were weighed
 | Option | Verdict |
 |---|---|
-| Student's registrar forwards to `name.margdarshakss.com` | Zero work, but the address bar shows our name. Kept as the fallback to mention to students |
+| Student's registrar forwards to `name.example.edu` | Zero work, but the address bar shows our name. Kept as the fallback to mention to students |
 | One CloudFront distribution per domain, created at runtime | Rejected: wide IAM permissions, slow, leftover resources outside CloudFormation, hard to test |
 | **CloudFront multi-tenant (distribution tenants)** | Chosen: one shared distribution, one tenant per domain, certificate issued and managed by CloudFront over HTTP, no per-domain distributions to clean up |
 
@@ -102,7 +102,7 @@ Nothing: an existing domain keeps working; only *new* setup is blocked. This avo
 ## 4. AWS and CloudFront lessons
 
 ### 4.1 A wildcard DNS record blocks a more specific CloudFront alias
-The first production deploy **failed and rolled back**: CloudFront refused to attach `deploy.margdarshakss.com` to the new portal distribution because the existing `*.margdarshakss.com` CNAME already made that name resolve to the *student* distribution. CloudFront refuses an alias whose DNS points at a different distribution.
+The first production deploy **failed and rolled back**: CloudFront refused to attach `deploy.example.edu` to the new portal distribution because the existing `*.example.edu` CNAME already made that name resolve to the *student* distribution. CloudFront refuses an alias whose DNS points at a different distribution.
 
 Fix: a **two-phase rollout**.
 1. Deploy the portal distribution *without* the alias (`PortalAlias=false`).
@@ -112,7 +112,7 @@ Fix: a **two-phase rollout**.
 Takeaway: when you add a name that falls under an existing wildcard, plan the DNS record *before* the alias, and make the alias a switchable parameter so the stack can be created first.
 
 ### 4.2 Browsers need CORS to PUT directly to S3
-The student page uploads the zip straight to a presigned S3 URL. S3 must allow the page's **origin**. The bucket rule allows only `https://deploy.margdarshakss.com`, so uploads from the plain `cloudfront.net` address failed ("The upload failed. Check your connection…") even though everything before that step worked. Diagnosis was a one-line preflight check:
+The student page uploads the zip straight to a presigned S3 URL. S3 must allow the page's **origin**. The bucket rule allows only `https://deploy.example.edu`, so uploads from the plain `cloudfront.net` address failed ("The upload failed. Check your connection…") even though everything before that step worked. Diagnosis was a one-line preflight check:
 
 ```
 curl -X OPTIONS <bucket-url> -H "Origin: <page origin>" -H "Access-Control-Request-Method: PUT"
@@ -388,7 +388,7 @@ What the work taught us, written before the first live run. Items marked *to ver
 - **A live test with a throwaway fixture is cheap and thorough.** The student, function, log group and counters were created by script and removed in a `finally`; a final scan proved nothing was left behind. Run the whole thing again after every fix: the Node failure only appeared after the first fixes unblocked the later steps.
 
 **A student's first real use found a gap the tests could not (2026-10-21).** A student opened their *custom domain* and every Analyze/Submit got `403`. Lessons:
-- **Every distribution that can serve a site needs every route.** The `/api/*` route was added to the distribution behind `<slug>.margdarshakss.com` but not to the separate multi-tenant distribution behind custom domains. It was on the plan as "Phase 2, pending", and the pending item became a user-visible failure within a day. When a feature has a "later" for one surface, say so loudly where users will meet it, or finish it first.
+- **Every distribution that can serve a site needs every route.** The `/api/*` route was added to the distribution behind `<slug>.example.edu` but not to the separate multi-tenant distribution behind custom domains. It was on the plan as "Phase 2, pending", and the pending item became a user-visible failure within a day. When a feature has a "later" for one surface, say so loudly where users will meet it, or finish it first.
 - **Who answered is the diagnosis.** The platform's gateway always answers in JSON. An **HTML** 403 with `X-Cache: Error from cloudfront` means CloudFront itself refused the request (here: POST on a GET/HEAD-only behavior) and the backend was never reached. Reading the response headers in DevTools took one look; start there.
 - **Reproduce before fixing.** Three read-only calls confirmed it: the custom domain failed, the same student's normal address worked, and the distribution config showed one origin and no `/api/*` behavior.
 - **Multi-tenant distributions are stricter.** `update-distribution` rejected `SmoothStreaming` (not allowed on multi-tenant) and wanted `FieldLevelEncryptionId`; the fix was found one error at a time, with nothing changed by the failed calls.

@@ -1,6 +1,6 @@
-# Implementation guide: test, deploy and onboard (margdarshakss.com)
+# Implementation guide: test, deploy and onboard (example.edu)
 
-This guide has two parts: Part 1 (below) sets up the hosting and the CLI flow; [Part 2](#part-2-web-portal-at-deploymargdarshakss-com) adds the web portal, Part 3 custom domains, Part 4 student backends. Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
+This guide has two parts: Part 1 (below) sets up the hosting and the CLI flow; [Part 2](#part-2-web-portal-at-deployexampleedu) adds the web portal, Part 3 custom domains, Part 4 student backends. Follow the phases in order. Each phase ends with a **✅ Pass check**; don't continue until it passes.
 Total time: about 45 minutes, most of it waiting for CloudFront and DNS.
 
 Commands use `curl.exe` (not `curl`) so they work in both PowerShell and Git Bash. Run everything from this folder unless told otherwise:
@@ -15,16 +15,16 @@ cd infra/student-deploy
 
 | Check | Result | Consequence |
 |---|---|---|
-| AWS account | `417780655868`, IAM user with `AdministratorAccess` | You can create every resource in this stack |
+| AWS account | `<ACCOUNT_ID>`, IAM user with `AdministratorAccess` | You can create every resource in this stack |
 | Default region | `us-east-1` | Stack deploys here; the CloudFront certificate must also be here, and it is |
-| ACM certificate `*.margdarshakss.com` | **ISSUED**, us-east-1, expires 2027-02-09 | Used as-is. It is already attached to another distribution, which is fine (certificates can be shared) |
-| Existing CloudFront distribution | `E2TDU2YC4RBM49` serving `bs.margdarshakss.com` | Left untouched. A specific name (`bs`) beats the wildcard (`*`), so `bs.margdarshakss.com` keeps working |
+| ACM certificate `*.example.edu` | **ISSUED**, us-east-1, expires 2027-02-09 | Used as-is. It is already attached to another distribution, which is fine (certificates can be shared) |
+| Existing CloudFront distribution | `<OTHER_DISTRIBUTION_ID>` serving `bs.example.edu` | Left untouched. A specific name (`bs`) beats the wildcard (`*`), so `bs.example.edu` keeps working |
 | Route 53 hosted zones | **none** | Your DNS is at your registrar or another DNS host, so the wildcard record in Phase 6 is added **by hand there** |
 | Existing stacks | two ECS stacks, unrelated | No name clashes (`student-hosting`, `/student-deploy/keys`) |
 | SAM CLI | **not installed** | Phase 2 installs it |
 
-> **Wildcard certificate rule:** `*.margdarshakss.com` covers exactly one level, so student sites are `alice.margdarshakss.com`.
-> `alice.apps.margdarshakss.com` would **not** be covered. That's why `samconfig.toml` uses `RootDomain=margdarshakss.com`.
+> **Wildcard certificate rule:** `*.example.edu` covers exactly one level, so student sites are `alice.example.edu`.
+> `alice.apps.example.edu` would **not** be covered. That's why `samconfig.toml` uses `RootDomain=example.edu`.
 
 `samconfig.toml` in this folder already holds your stack name, region, domain and certificate ARN, so deploy needs no prompts.
 
@@ -74,7 +74,7 @@ sam --version
 aws sts get-caller-identity
 ```
 
-✅ **Pass check:** `sam --version` prints a version, and `get-caller-identity` shows account `417780655868`.
+✅ **Pass check:** `sam --version` prints a version, and `get-caller-identity` shows account `<ACCOUNT_ID>`.
 
 (If `winget` can't install it, use the MSI from the [AWS SAM CLI install page](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html).)
 
@@ -85,16 +85,16 @@ aws sts get-caller-identity
 Record the DNS baseline for your existing site so you can prove later that it was not affected:
 
 ```
-nslookup bs.margdarshakss.com
+nslookup bs.example.edu
 ```
 
-Note the answer. It should point at `d15a5zralmyfzf.cloudfront.net`. Then confirm the certificate is still valid and covers the wildcard:
+Note the answer. It should point at `<id>.cloudfront.net`. Then confirm the certificate is still valid and covers the wildcard:
 
 ```
-aws acm describe-certificate --region us-east-1 --certificate-arn arn:aws:acm:us-east-1:417780655868:certificate/6a5e2ee0-71cd-4d9b-9b5c-7d43b675d9bb --query "Certificate.[Status,SubjectAlternativeNames]" --output text
+aws acm describe-certificate --region us-east-1 --certificate-arn arn:aws:acm:us-east-1:<ACCOUNT_ID>:certificate/<CERTIFICATE_ID> --query "Certificate.[Status,SubjectAlternativeNames]" --output text
 ```
 
-✅ **Pass check:** prints `ISSUED` and `*.margdarshakss.com`.
+✅ **Pass check:** prints `ISSUED` and `*.example.edu`.
 
 ---
 
@@ -119,7 +119,7 @@ Write down these four values:
 | `DeployApiUrl` | Phase 5 (goes into the student script) |
 | `DistributionDomain` | Phase 6 (the DNS record) and the pre-DNS smoke test |
 | `BucketName` | Cleanup and debugging |
-| `SiteUrlPattern` | Should read `https://<student>.margdarshakss.com/` |
+| `SiteUrlPattern` | Should read `https://<student>.example.edu/` |
 
 ✅ **Pass check:** stack status is `CREATE_COMPLETE`:
 
@@ -182,10 +182,10 @@ Expected:
 ```
 ▶ Packed 3 files from ./ (1 KB)
 ▶ Publishing...
-✔ Live at https://smoketest.margdarshakss.com/  (3 files, ...)
+✔ Live at https://smoketest.example.edu/  (3 files, ...)
 ```
 
-(The `margdarshakss.com` address won't resolve yet; that's Phase 7.)
+(The `example.edu` address won't resolve yet; that's Phase 7.)
 
 ### 6c. Check it through CloudFront's own address
 
@@ -237,7 +237,7 @@ prints `403` or `404` (the old file was removed). Restore the sample with `git c
 
 ## Phase 7: Point your wildcard DNS at CloudFront
 
-Because you have no Route 53 zone, do this at wherever `margdarshakss.com` DNS is managed (registrar or DNS host).
+Because you have no Route 53 zone, do this at wherever `example.edu` DNS is managed (registrar or DNS host).
 
 Add **one** record:
 
@@ -246,17 +246,17 @@ Add **one** record:
 | `CNAME` | `*` | your `DistributionDomain` (e.g. `d1234abcd.cloudfront.net`) | 300 |
 
 Notes:
-- **Do not delete or change existing records**, especially the one for `bs`. Explicit records always win over `*`, so `bs.margdarshakss.com` keeps going to its own distribution.
-- Some hosts want the full name (`*.margdarshakss.com`) and some just `*`. Use whichever the form expects.
+- **Do not delete or change existing records**, especially the one for `bs`. Explicit records always win over `*`, so `bs.example.edu` keeps going to its own distribution.
+- Some hosts want the full name (`*.example.edu`) and some just `*`. Use whichever the form expects.
 - **Cloudflare:** set the record to **DNS only** (grey cloud). A proxied record sends traffic through Cloudflare instead of straight to CloudFront and breaks the setup.
-- A wildcard also catches names you haven't defined (e.g. `foo.margdarshakss.com`); they'll show an error page instead of "not found". That's harmless.
+- A wildcard also catches names you haven't defined (e.g. `foo.example.edu`); they'll show an error page instead of "not found". That's harmless.
 
 Wait 1–5 minutes, then verify:
 
 ```
-nslookup smoketest.margdarshakss.com
-nslookup bs.margdarshakss.com
-curl.exe -sI https://smoketest.margdarshakss.com/
+nslookup smoketest.example.edu
+nslookup bs.example.edu
+curl.exe -sI https://smoketest.example.edu/
 ```
 
 Expected:
@@ -264,9 +264,9 @@ Expected:
 - `bs...` still gives **exactly the baseline you recorded in Phase 3**.
 - `curl` shows `HTTP/2 200` and `content-type: text/html; charset=utf-8`.
 
-Open `https://smoketest.margdarshakss.com/` in a browser: "It works 🎉", padlock valid, and "JavaScript loaded from smoketest.margdarshakss.com". Then click the **/some/deep/route** link. It must show the **same page** (single-page-app fallback works).
+Open `https://smoketest.example.edu/` in a browser: "It works 🎉", padlock valid, and "JavaScript loaded from smoketest.example.edu". Then click the **/some/deep/route** link. It must show the **same page** (single-page-app fallback works).
 
-✅ **Pass check:** all of the above, and `https://bs.margdarshakss.com` still loads as before.
+✅ **Pass check:** all of the above, and `https://bs.example.edu` still loads as before.
 
 ---
 
@@ -293,7 +293,7 @@ Each student gets a block like this, so send it to them privately:
 
 ```
 DEPLOY_KEY=alice.xxxxxxxxxxxxxxxx
-Site: https://alice.margdarshakss.com/
+Site: https://alice.example.edu/
 ```
 
 Names must be lowercase letters, digits or `-` (max 30), and can't be reserved (`www`, `api`, `admin`, `mail`, `bs`, ...). Add any other subdomain you already use to the `RESERVED` list at the top of `admin.mjs`.
@@ -310,7 +310,7 @@ They put `deploy.mjs` in their project root, put `DEPLOY_KEY=...` in `.env.local
 ### 9c. Their backend requirements (tell students)
 
 - The frontend must read its backend URL from `import.meta.env.VITE_API_URL` (Vite) or the framework's equivalent. CloudFront serves static files only and has no `/api` proxy.
-- The backend must be **HTTPS** and allow the student's origin in CORS (`https://alice.margdarshakss.com`). A dev backend with `origins: "*"` works.
+- The backend must be **HTTPS** and allow the student's origin in CORS (`https://alice.example.edu`). A dev backend with `origins: "*"` works.
 
 ### 9d. Deploy this repo as the first real site (dress rehearsal)
 
@@ -338,7 +338,7 @@ then:
 npm run deploy
 ```
 
-✅ **Pass check:** `https://shoplist.margdarshakss.com` loads the app, and creating a list / voice input (voice needs HTTPS, which you now have) reaches the backend. If the browser console shows a CORS error, add the site's origin to the backend's `CORS(...)` config in `app.py`.
+✅ **Pass check:** `https://shoplist.example.edu` loads the app, and creating a list / voice input (voice needs HTTPS, which you now have) reaches the backend. If the browser console shows a CORS error, add the site's origin to the backend's `CORS(...)` config in `app.py`.
 
 > To place `deploy.mjs` at the repo root for the GitHub Action (`student/deploy.yml` runs `node deploy.mjs`), copy `student/deploy.mjs` there, or change the workflow to `npm run deploy`.
 
@@ -374,7 +374,7 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 
 | Symptom | Likely cause and fix |
 |---|---|
-| `sam deploy` fails with `CNAMEAlreadyExists` for `*.margdarshakss.com` | Another distribution (possibly in another account) already claims that wildcard. Find it: `aws cloudfront list-distributions --query "DistributionList.Items[].[Id,Aliases.Items]"`. Remove the alias there, or switch to a subdomain root like `apps.margdarshakss.com` with a matching `*.apps.margdarshakss.com` certificate |
+| `sam deploy` fails with `CNAMEAlreadyExists` for `*.example.edu` | Another distribution (possibly in another account) already claims that wildcard. Find it: `aws cloudfront list-distributions --query "DistributionList.Items[].[Id,Aliases.Items]"`. Remove the alias there, or switch to a subdomain root like `apps.example.edu` with a matching `*.apps.example.edu` certificate |
 | Stack stuck in `ROLLBACK_COMPLETE` | `aws cloudformation delete-stack --stack-name student-hosting`, wait, rerun `sam deploy` |
 | `deploy.mjs`: `Invalid or missing x-deploy-key` | Key typed wrong, student not added, or removed. Keys are cached up to 60 seconds after a change |
 | `deploy.mjs`: `API_URL ... is not set` | Phase 5 not done in the file you handed out |
@@ -382,8 +382,8 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 | Site shows XML `AccessDenied` | Nothing published for that name yet (or the path is a typo). Publish, or check `aws s3 ls s3://BUCKET/sites/` |
 | Old version still showing | Wait ~30 s, then Ctrl+Shift+R. If it persists: `aws cloudfront list-invalidations --distribution-id DIST_ID` and check status is `Completed` |
 | Page loads, CSS/JS missing (404) | Only in path mode: the app needs `base: '/name/'`. In your subdomain mode this should not happen. Check the browser Network tab for the failing URL |
-| Certificate warning in the browser | Name is two levels deep (`a.b.margdarshakss.com`), which the wildcard doesn't cover, or DNS points at the wrong host |
-| `This site can't be reached` on `name.margdarshakss.com` | DNS record not added or not propagated. `nslookup name.margdarshakss.com` |
+| Certificate warning in the browser | Name is two levels deep (`a.b.example.edu`), which the wildcard doesn't cover, or DNS points at the wrong host |
+| `This site can't be reached` on `name.example.edu` | DNS record not added or not propagated. `nslookup name.example.edu` |
 | Blank page + CORS error in console | Backend doesn't allow the origin. Fix backend CORS (see 9c) |
 | Page works but API calls fail | `VITE_API_URL` missing at **build** time (it's baked in during `npm run build`), or the backend is `http://` (mixed content blocked) |
 | Voice input says it requires HTTPS | Student opened the site over `http://`. CloudFront redirects automatically, so use the `https://` link |
@@ -394,8 +394,8 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 - [ ] `node tests/run.mjs` passes
 - [ ] Stack is `CREATE_COMPLETE`
 - [ ] Smoke test passed on `cloudfront.net` (Phase 6)
-- [ ] `https://smoketest.margdarshakss.com/` worked, including the deep-route fallback (Phase 7)
-- [ ] `bs.margdarshakss.com` still behaves exactly as before
+- [ ] `https://smoketest.example.edu/` worked, including the deep-route fallback (Phase 7)
+- [ ] `bs.example.edu` still behaves exactly as before
 - [ ] Bucket returns `403` when accessed directly
 - [ ] Wrong or missing key returns `401`
 - [ ] `smoketest` removed (Phase 8)
@@ -404,14 +404,14 @@ Then delete the `*` CNAME at your DNS host. Your certificate and the `bs` distri
 
 ---
 
-# Part 2: Web portal at deploy.margdarshakss.com
+# Part 2: Web portal at deploy.example.edu
 
 Teachers create expiring tokens in a web page; students sign in with a token and upload their build folder. The CLI flow above keeps working in parallel. The same `sam deploy` creates everything, so if you have not deployed yet, Phase 4 already includes the portal and you can skip step P2.
 
 How it fits together:
 
 ```
-deploy.margdarshakss.com ─ CloudFront (PortalDistribution)
+deploy.example.edu ─ CloudFront (PortalDistribution)
    ├─ /*      → s3://BUCKET/portal/   (the pages in web/)
    └─ /api/*  → API Gateway → Lambda → DynamoDB (tokens)
 Daily 03:00 UTC: SweeperFunction moves expired sites to s3://BUCKET/archive/<name>/
@@ -442,7 +442,7 @@ Write down the new outputs:
 
 | Output | Used for |
 |---|---|
-| `PortalUrl` | The address you give people (`https://deploy.margdarshakss.com/`) |
+| `PortalUrl` | The address you give people (`https://deploy.example.edu/`) |
 | `PortalDistributionDomain` | The DNS target in P5 and the smoke test in P4 |
 | `PortalDistributionId`, `TokensTableName` | Used by `admin.mjs` automatically |
 
@@ -488,24 +488,24 @@ At your DNS host add **one** record:
 |---|---|---|---|
 | `CNAME` | `deploy` | your `PortalDistributionDomain` | 300 |
 
-An explicit `deploy` record beats the `*` wildcard, so student sites and `bs` are unaffected. On Cloudflare use **DNS only** (grey cloud). If `sam deploy` failed with `CNAMEAlreadyExists` for `deploy.margdarshakss.com`, another distribution already claims that name; remove it there first.
+An explicit `deploy` record beats the `*` wildcard, so student sites and `bs` are unaffected. On Cloudflare use **DNS only** (grey cloud). If `sam deploy` failed with `CNAMEAlreadyExists` for `deploy.example.edu`, another distribution already claims that name; remove it there first.
 
 ```
-nslookup deploy.margdarshakss.com
-curl.exe -sI https://deploy.margdarshakss.com/
+nslookup deploy.example.edu
+curl.exe -sI https://deploy.example.edu/
 ```
 
-✅ **Pass check:** `HTTP/2 200`, valid padlock, and `https://bs.margdarshakss.com` and a student site still load.
+✅ **Pass check:** `HTTP/2 200`, valid padlock, and `https://bs.example.edu` and a student site still load.
 
 ## P6. Full walk-through (acceptance test)
 
-1. **Teacher:** open `https://deploy.margdarshakss.com/teacher`, sign in, click **New token**, valid 7 days, student name `Test One`. Copy the token.
-2. **Student:** open `/student` in a private window, paste the token. You should see `test-one.margdarshakss.com`, a green bar and "Nothing uploaded yet".
+1. **Teacher:** open `https://deploy.example.edu/teacher`, sign in, click **New token**, valid 7 days, student name `Test One`. Copy the token.
+2. **Student:** open `/student` in a private window, paste the token. You should see `test-one.example.edu`, a green bar and "Nothing uploaded yet".
 3. **Upload:** drag in the `sample-site` folder. The checklist should be all green; click **Upload and publish**. Open the link: "It works 🎉".
 4. **Bad upload:** drag in a folder with a file called `my photo.png`. The button must stay disabled and name the file.
 5. **Warning and regeneration:** create a second token valid for **2 days** (inside the 3-day warning window). The student page shows the amber banner and a **Request regeneration** button. Send a request.
 6. **Approve:** the teacher page shows a badge on **Requests**. Approve with 30 days. The student page shows the new expiry.
-7. **Expiry:** click **Take offline** on the first token. `test-one.margdarshakss.com` stops loading (after about a minute), the files are in `archive/test-one/`, and **Extend** brings the site back.
+7. **Expiry:** click **Take offline** on the first token. `test-one.example.edu` stops loading (after about a minute), the files are in `archive/test-one/`, and **Extend** brings the site back.
 8. **Clean up:** **Revoke** the test tokens. Optionally `aws s3 rm s3://BUCKET/archive/test-one --recursive`.
 
 ✅ **Pass check:** all eight steps behave as described.
@@ -528,7 +528,7 @@ Portal troubleshooting:
 |---|---|
 | Teacher page says "Teacher account is not set up yet" | Run P3 |
 | "Too many failed attempts" | Five wrong passwords from one address lock it for 15 minutes. Wait, or delete the `fail#<ip>` item in the DynamoDB table |
-| Student upload fails with a network error and a CORS message in the console | The page was opened on an address other than `https://deploy.margdarshakss.com`. Use the real address |
+| Student upload fails with a network error and a CORS message in the console | The page was opened on an address other than `https://deploy.example.edu`. Use the real address |
 | Pages show old content after `portal-publish` | Hard-refresh. `portal-publish` already invalidates the cache |
 | `/teacher` gives an XML error | Pages not published yet (P4), or the CloudFront function did not deploy. Open `/teacher.html` to tell them apart |
 | Site name "already taken" | Names are unique across portal tokens and CLI students. Pick another |
@@ -537,17 +537,17 @@ Portal troubleshooting:
 
 # Part 3: Custom domains for students
 
-A student can serve their site on their own domain (for example `www.theirname.com`) in addition to `name.margdarshakss.com`. The teacher decides who may use it.
+A student can serve their site on their own domain (for example `www.theirname.com`) in addition to `name.example.edu`. The teacher decides who may use it.
 
 **Teacher:** on the Tokens page each student has a **Domain: off / on** button. Off (the default) shows the student a disabled field with "Owner not enabled for you. Please contact site owner." Switching it off later does not remove a domain that is already live.
 
 **Student:** on their page, **Custom domain** card:
 1. Type a subdomain such as `www.theirname.com` and click **Save**. (A bare domain like `theirname.com` is refused: it cannot hold a CNAME at most DNS providers.)
-2. At their DNS provider, add one `CNAME` record for that name pointing to `d4cls3ve04vi3.cloudfront.net` (on Cloudflare: **DNS only**, grey cloud).
+2. At their DNS provider, add one `CNAME` record for that name pointing to `<id>.cloudfront.net` (on Cloudflare: **DNS only**, grey cloud).
 3. The page moves through *DNS record*, *HTTPS certificate*, *Finishing setup*, *Live* by itself (usually 1 to 3 minutes after the record is visible). HTTPS is automatic.
 4. **Remove domain** undoes it at any time.
 
-Rules: one domain per student; a domain can belong to only one student; the token must be active to start; `margdarshakss.com` names and AWS addresses are refused.
+Rules: one domain per student; a domain can belong to only one student; the token must be active to start; `example.edu` names and AWS addresses are refused.
 
 ## How it is built
 
@@ -565,10 +565,10 @@ These were created by hand with the CLI and are referenced by the `TenantDistrib
 
 | Thing | Value |
 |---|---|
-| Multi-tenant distribution (template) | `E1NTIC3LHBW49Q`, config in `custom-domain/tenant-distribution.json` |
+| Multi-tenant distribution (template) | `<TENANT_DISTRIBUTION_ID>`, config in `custom-domain/tenant-distribution.json` |
 | CloudFront function (SPA fallback) | `student-hosting-spa-fallback`, source `custom-domain/spa-fallback.js` |
-| Connection group routing endpoint | `d4cls3ve04vi3.cloudfront.net` (what students point their CNAME at) |
-| Origin access control used by the template | `E35NKLYVBXWXX4` |
+| Connection group routing endpoint | `<id>.cloudfront.net` (what students point their CNAME at) |
+| Origin access control used by the template | `<ORIGIN_ACCESS_CONTROL_ID>` |
 | CloudFront function (tenant `/api` route) | `student-hosting-tenant-api`, source `custom-domain/tenant-api-route.js` |
 | Backend route on this distribution | an origin `backend` (origin path `/b/{{student}}`) and an `/api/*` behavior, added by `custom-domain/apply-tenant-api-route.py` (2026-10-21) |
 
@@ -580,7 +580,7 @@ The bucket policy lets that distribution and its tenants read `sites/*` (stateme
 
 | Symptom | Likely cause and fix |
 |---|---|
-| Stuck on "Add the DNS record" | The CNAME is not visible yet or points elsewhere. `nslookup -type=CNAME www.theirname.com` must show `d4cls3ve04vi3.cloudfront.net`. On Cloudflare the record must be DNS only |
+| Stuck on "Add the DNS record" | The CNAME is not visible yet or points elsewhere. `nslookup -type=CNAME www.theirname.com` must show `<id>.cloudfront.net`. On Cloudflare the record must be DNS only |
 | "CloudFront refused this domain: ..." | The name is already attached to another CloudFront distribution or tenant. Remove it there first |
 | Live but shows an old version | Normally cleared on publish. If it persists, create an invalidation for the tenant: `aws cloudfront create-invalidation-for-distribution-tenant --id dt_xxx --invalidation-batch ...` |
 | Student cannot start (403) | The Domain switch is off for them, or the token is not active |
@@ -595,7 +595,7 @@ Always deploy from **this** folder with the safe routine: `sam deploy --no-execu
 A teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...`. Design and reasoning: [backend_wire.md](backend_wire.md). Student instructions: [student/BACKEND.md](student/BACKEND.md).
 
 ```
-<slug>.margdarshakss.com/api/x → CloudFront → Backend API → gateway Lambda → student function sd-<slug>
+<slug>.example.edu/api/x → CloudFront → Backend API → gateway Lambda → student function sd-<slug>
 ```
 
 **Status (2026-10-21): deployed and verified live** (see backend_wire.md for the 48-check run and the three defects it found). `samconfig.toml` sets `BackendEnabled="true"` for this stack; the template default is still `false`. Pilot rules below still apply because the Lambda quota is 10.
@@ -633,7 +633,7 @@ Both deploys use the safe routine from Part 3 (changeset first, read every row, 
 
 **Step 2: turn the feature on.** Set `BackendEnabled="true"` in `samconfig.toml` and deploy. Expect **Add**: `BackendApi`, `GatewayFunction` (+ its role and invoke permissions), `BackendRouteFunction`; **Modify**: `Distribution` (a new origin and an `/api/*` behavior). CloudFront takes 5 to 10 minutes. Then:
 1. Publish the updated pages: `node admin.mjs portal-publish`.
-2. Check the new route answers: `curl https://<any-student>.margdarshakss.com/api/x` should return JSON `{"error": "no_backend"}` with status 404 (the gateway answering, not your site's page).
+2. Check the new route answers: `curl https://<any-student>.example.edu/api/x` should return JSON `{"error": "no_backend"}` with status 404 (the gateway answering, not your site's page).
 3. Direct calls to the Backend API URL (stack output `BackendApiUrl`) without the secret header must return `403 forbidden`.
 
 **Step 3: first live run (use a temporary test student, like the custom-domain test).** Enable Backend for the student, deploy the Python and Node starter templates through the portal, call `/api/hello` on their site, set an environment variable and see the function read it, read the logs, exhaust a small allowance (`runs_limit` 3) and confirm the 429, toggle OFF and confirm the 503, then remove the backend. **Confirmed live: AWS **accepts** reserved concurrency 0 at an account limit of 10 (the gateway's own check also stops requests). Afterwards confirm nothing is left: no `sd-*` functions, log groups or test rows.
@@ -644,7 +644,7 @@ Both deploys use the safe routine from Part 3 (changeset first, read every row, 
 
 ## Backends on custom domains
 
-A custom domain is served by a **different distribution** (the multi-tenant one from Part 3), so it needs its own `/api/*` route; the one in `template.yaml` only covers `<slug>.margdarshakss.com`. Without it, a POST to `https://<custom-domain>/api/...` is rejected by CloudFront with an **HTML 403 page** (and a GET returns the site's own page). A response from the gateway is always JSON, so "HTML 403 on `/api`" means the request never reached the backend.
+A custom domain is served by a **different distribution** (the multi-tenant one from Part 3), so it needs its own `/api/*` route; the one in `template.yaml` only covers `<slug>.example.edu`. Without it, a POST to `https://<custom-domain>/api/...` is rejected by CloudFront with an **HTML 403 page** (and a GET returns the site's own page). A response from the gateway is always JSON, so "HTML 403 on `/api`" means the request never reached the backend.
 
 One-time setup (already done for this account on 2026-10-21; repeat only if that distribution is ever recreated):
 

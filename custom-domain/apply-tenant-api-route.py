@@ -1,6 +1,6 @@
 """Give the multi-tenant distribution (student CUSTOM DOMAINS) its /api/* route to the Backend API.
 
-Why: students' backends are reached at <site>/api/... The normal address (<slug>.margdarshakss.com) gets that route from
+Why: students' backends are reached at <site>/api/... The normal address (<slug>.example.edu) gets that route from
 template.yaml. Custom domains are served by a separate, hand-made distribution that is NOT in the template, so without this
 step a POST to https://<custom-domain>/api/... is rejected by CloudFront with an HTML 403 page.
 
@@ -22,7 +22,7 @@ import tempfile
 
 import boto3
 
-DISTRIBUTION_ID = os.environ.get("TENANT_DISTRIBUTION_ID", "E1NTIC3LHBW49Q")
+DISTRIBUTION_ID = os.environ.get("TENANT_DISTRIBUTION_ID", "<TENANT_DISTRIBUTION_ID>")
 STACK = os.environ.get("STACK_NAME", "student-hosting")
 FUNCTION_NAME = "student-hosting-tenant-api"
 

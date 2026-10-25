@@ -22,7 +22,8 @@ import zipfile
 import boto3
 from botocore.exceptions import ClientError
 
-ROOT_DOMAIN = os.environ.get("SMOKE_ROOT_DOMAIN", "margdarshakss.com")
+STACK = os.environ.get("SMOKE_STACK_NAME", "student-hosting")
+ROOT_DOMAIN = os.environ.get("SMOKE_ROOT_DOMAIN", "example.edu")
 BASE = os.environ.get("SMOKE_BASE_URL", f"https://deploy.{ROOT_DOMAIN}")
 SLUG = "zz-backendtest"
 SITE = f"https://{SLUG}.{ROOT_DOMAIN}"
@@ -31,9 +32,9 @@ cfn = boto3.client("cloudformation", region_name="us-east-1")
 lam = boto3.client("lambda", region_name="us-east-1")
 logs = boto3.client("logs", region_name="us-east-1")
 table = boto3.resource("dynamodb", region_name="us-east-1").Table(
-    cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="TokensTable")["StackResourceDetail"]["PhysicalResourceId"])
-BUCKET = cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="SitesBucket")["StackResourceDetail"]["PhysicalResourceId"]
-STACK_OUTPUTS = {o["OutputKey"]: o["OutputValue"] for o in cfn.describe_stacks(StackName="student-hosting")["Stacks"][0]["Outputs"]}
+    cfn.describe_stack_resource(StackName=STACK, LogicalResourceId="TokensTable")["StackResourceDetail"]["PhysicalResourceId"])
+BUCKET = cfn.describe_stack_resource(StackName=STACK, LogicalResourceId="SitesBucket")["StackResourceDetail"]["PhysicalResourceId"]
+STACK_OUTPUTS = {o["OutputKey"]: o["OutputValue"] for o in cfn.describe_stacks(StackName=STACK)["Stacks"][0]["Outputs"]}
 STORAGE_URL = STACK_OUTPUTS.get("StorageApiUrl", "")
 DATA_TABLE = STACK_OUTPUTS.get("StudentDataTableName", "")
 
@@ -119,7 +120,7 @@ def load_platform_modules():
     connector is switched on and off through the same code the portal runs). Returns the openrouter module."""
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "lambda"))
     os.environ.update(TOKENS_TABLE=table.name, STORAGE_ENABLED="true" if STORAGE_URL else "false", STORAGE_URL=STORAGE_URL, DATA_TABLE=DATA_TABLE, AI_ENABLED="true", AI_SECRET_NAME="openrouter", BACKEND_ENABLED="true", BUCKET=BUCKET,
-                      AWS_DEFAULT_REGION="us-east-1", AWS_REGION="us-east-1", ROOT_DOMAIN=os.environ.get("SMOKE_ROOT_DOMAIN", "margdarshakss.com"))
+                      AWS_DEFAULT_REGION="us-east-1", AWS_REGION="us-east-1", ROOT_DOMAIN=os.environ.get("SMOKE_ROOT_DOMAIN", "example.edu"))
     import openrouter
     return openrouter
 
@@ -421,9 +422,9 @@ try:
         boundary = secrets.token_hex(8)
         body = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in up["fields"].items())
         body += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="live.txt"\r\nContent-Type: text/plain\r\n\r\n'.encode() + payload + f"\r\n--{boundary}--\r\n".encode()
-        ps, pb, ph = http("POST", up["url"], raw=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": "https://zz-backendtest.margdarshakss.com"})
+        ps, pb, ph = http("POST", up["url"], raw=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "Origin": "https://zz-backendtest.example.edu"})
         check("STORAGE: the file is accepted by S3 (the signed form works)", ps in (200, 201, 204), (ps, str(pb)[:200]))
-        check("STORAGE: S3 sends the CORS header a browser needs for the upload", ph.get("Access-Control-Allow-Origin", ph.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.margdarshakss.com"), ph)
+        check("STORAGE: S3 sends the CORS header a browser needs for the upload", ph.get("Access-Control-Allow-Origin", ph.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.example.edu"), ph)
         too_big = payload + b"1"
         bad = b"".join(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode() for k, v in up["fields"].items())
         bad += f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="live.txt"\r\nContent-Type: text/plain\r\n\r\n'.encode() + too_big + f"\r\n--{boundary}--\r\n".encode()
@@ -432,9 +433,9 @@ try:
         s, b = sapi("GET", "/v1/files")
         check("STORAGE: the file is listed with its size", s == 200 and [(f["name"], f["size"]) for f in b["files"]] == [("live.txt", len(payload))], (s, b))
         s, b = sapi("GET", "/v1/files/live.txt")
-        ds, content, dh = http("GET", b["url"], headers={"Origin": "https://zz-backendtest.margdarshakss.com"}) if s == 200 else (0, "", {})
+        ds, content, dh = http("GET", b["url"], headers={"Origin": "https://zz-backendtest.example.edu"}) if s == 200 else (0, "", {})
         check("STORAGE: the download link returns the same bytes", ds == 200 and content == payload.decode(), (ds, str(content)[:60]))
-        check("STORAGE: the download link has CORS too (fetch from the page works)", dh.get("Access-Control-Allow-Origin", dh.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.margdarshakss.com"), dh)
+        check("STORAGE: the download link has CORS too (fetch from the page works)", dh.get("Access-Control-Allow-Origin", dh.get("access-control-allow-origin")) in ("*", "https://zz-backendtest.example.edu"), dh)
         s, b = sapi("POST", "/v1/files/upload-url", {"name": "huge.bin", "size": 2 * 1024 * 1024})
         check("STORAGE: the 1 MB file space cap is enforced", s == 413 and b["error"] == "quota_exceeded", (s, b))
         check("STORAGE: delete removes the file", sapi("DELETE", "/v1/files/live.txt")[0] == 200 and sapi("GET", "/v1/files")[1]["files"] == [])
@@ -462,7 +463,7 @@ try:
         # the portal function's role may find and delete items, and nothing more on that table
         try:
             iam = boto3.client("iam")
-            role_arn = iam.get_role(RoleName=cfn.describe_stack_resource(StackName="student-hosting", LogicalResourceId="DeployFunctionRole")["StackResourceDetail"]["PhysicalResourceId"])["Role"]["Arn"]
+            role_arn = iam.get_role(RoleName=cfn.describe_stack_resource(StackName=STACK, LogicalResourceId="DeployFunctionRole")["StackResourceDetail"]["PhysicalResourceId"])["Role"]["Arn"]
             table_arn = boto3.client("dynamodb", region_name="us-east-1").describe_table(TableName=DATA_TABLE)["Table"]["TableArn"]
             verdict = {r["EvalActionName"]: r["EvalDecision"] for r in iam.simulate_principal_policy(
                 PolicySourceArn=role_arn, ActionNames=["dynamodb:Query", "dynamodb:BatchWriteItem", "dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem", "dynamodb:Scan"],

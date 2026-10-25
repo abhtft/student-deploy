@@ -7,7 +7,7 @@ Every HTTP route of the portal, the legacy CLI, and the student-backend gateway.
 Conventions:
 - All bodies are JSON unless stated. Errors are `{"error": "<message or code>"}`.
 - Times are Unix epoch **seconds** (UTC).
-- Portal routes are served at **`https://deploy.margdarshakss.com`** (CloudFront forwards `/api/*` to the portal API). They need a session in the header `Authorization: Bearer <session>`.
+- Portal routes are served at **`https://deploy.example.edu`** (CloudFront forwards `/api/*` to the portal API). They need a session in the header `Authorization: Bearer <session>`.
 - **Teacher** and **student** sessions are different: a student session never works on `/api/admin/...`, and vice versa. Teacher sessions last 8 hours, student sessions 12 hours.
 
 ---
@@ -117,7 +117,7 @@ Body `{ "note": "..." }` (optional, ≤ 300). Allowed in the last 3 days before 
 | Route | Body | Response |
 |---|---|---|
 | `POST /api/student/upload-url` | none | `200 { "uploadUrl": "<presigned S3 PUT URL>", "maxBytes": 52428800 }` |
-| `POST /api/student/publish` | none (reads the uploaded zip) | `200 { "url": "https://<slug>.margdarshakss.com/", "files": 12, "removed": 1, "warning"?: "..." }` |
+| `POST /api/student/publish` | none (reads the uploaded zip) | `200 { "url": "https://<slug>.example.edu/", "files": 12, "removed": 1, "warning"?: "..." }` |
 
 Flow: `upload-url`, then `PUT` the zip bytes to `uploadUrl` (no extra headers needed; the browser may send `Content-Type`), then `publish`. Requires an **active** token (`403` otherwise). `400` for a bad zip: unsafe paths, more than 2,000 files, more than 200 MB unzipped, or no `index.html` at the top.
 
@@ -125,7 +125,7 @@ Flow: `upload-url`, then `PUT` the zip bytes to `uploadUrl` (no extra headers ne
 
 | Route | Body | Notes |
 |---|---|---|
-| `PUT /api/student/domain` | `{ "domain": "www.example.com" }` | requires **Domain: on**, an active token, no existing domain. `403` with `Owner not enabled for you. Please contact site owner.`; `409` already have one / domain used by another site; `400` invalid (bare domain, `margdarshakss.com` name, AWS address). Returns `200 { "token": <view> }` |
+| `PUT /api/student/domain` | `{ "domain": "www.example.com" }` | requires **Domain: on**, an active token, no existing domain. `403` with `Owner not enabled for you. Please contact site owner.`; `409` already have one / domain used by another site; `400` invalid (bare domain, `example.edu` name, AWS address). Returns `200 { "token": <view> }` |
 | `GET /api/student/domain/status` | none | advances setup by one step and returns `{ "token": <view> }`; poll about every 8 seconds |
 | `DELETE /api/student/domain` | none | starts removal; returns the view (state `removing`, then none) |
 
@@ -175,7 +175,7 @@ Returned by almost every route above (`token`, `item`, or inside lists).
 ```json
 {
   "id": "<64 hex chars>",           "slug": "alice",            "student_name": "Alice",   "hint": "NdgQ",
-  "url": "https://alice.margdarshakss.com/",
+  "url": "https://alice.example.edu/",
   "status": "active",               // active | expired | offline | revoked
   "created_at": 1792000000,         "expires_at": 1794592000,   "offline_at": 1794851200,  "warn_at": 1794332800,
   "last_deploy_at": 1792500000,     "can_deploy": true,
@@ -184,7 +184,7 @@ Returned by almost every route above (`token`, `item`, or inside lists).
   "can_request_regen": false,
   "custom_domain": {
     "available": true, "enabled": false, "domain": "", "state": "none",
-    "message": "", "cname_target": "d4cls3ve04vi3.cloudfront.net", "site_url": ""
+    "message": "", "cname_target": "<id>.cloudfront.net", "site_url": ""
   },
   "backend": {
     "available": true, "enabled": true,
@@ -219,7 +219,7 @@ The storage key is never returned. While the connector is on, the two `env_names
 
 ## 5. Student backend (gateway)
 
-The student's function is reached at `https://<site>/api/<route>` (the site is `<slug>.margdarshakss.com` or the student's custom domain). The `/api` prefix is removed before the function sees the request.
+The student's function is reached at `https://<site>/api/<route>` (the site is `<slug>.example.edu` or the student's custom domain). The `/api` prefix is removed before the function sees the request.
 
 ### What the function receives
 An API Gateway HTTP API **payload v2** event:

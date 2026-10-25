@@ -96,7 +96,7 @@ Mentions in comments and placeholders like `mds_xxxxxxxx` do not trigger errors 
 The kit is no longer needed to get started. One command, once per computer (Node is the only requirement):
 
 ```bash
-npx -y https://deploy.margdarshakss.com/class-platform-mcp.tgz setup
+npx -y https://deploy.example.edu/class-platform-mcp.tgz setup
 ```
 
 It asks for the token (masked: `mds_` then one `*` per character), checks it with the portal, saves it in `~/.class-platform/token` (the home folder, so every project can use it and none can commit it), finds VS Code and Antigravity, shows exactly what it will add to each editor's MCP settings, asks, makes a backup and merges a single `class-platform` entry (other servers are never touched; a settings file with comments is left alone and the entry is printed instead). Then: restart the editor (or refresh its MCP list), open an **empty folder** and tell the AI *set up my class project*. The `init_project` tool, after a yes, writes the starter (site, backend, rules, helpers) into the folder and installs the site's packages; from there it is the same journey: describe the app, `check_project`, *publish my site*.

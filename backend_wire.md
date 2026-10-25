@@ -48,7 +48,7 @@ Still open: the teacher toggle and **Runs…** through the real teacher page (th
 **The idea.** A student's frontend usually needs a small backend. Today the portal hosts static files only, so students must bring their own HTTPS backend with CORS. "Backend wire" lets a student (when the teacher allows it) upload a small function and have the platform **wire it** to their site in one standard way:
 
 ```
-Student site  https://<slug>.margdarshakss.com   (or their custom domain)
+Student site  https://<slug>.example.edu   (or their custom domain)
    frontend calls   fetch('/api/hello')          ← same origin, no CORS, no URL to configure
         │
    CloudFront  /api/*  →  Backend API (API Gateway HTTP API)  →  Gateway Lambda  →  student's Lambda  sd-<slug>
@@ -120,7 +120,7 @@ Other facts I would verify early in a one-day spike (section 9, Phase 1a):
 
 **Goals**
 1. A student with a working frontend can add a backend in **under 10 minutes**, with no AWS knowledge.
-2. **Same-origin calls** (`/api/...`): no CORS configuration, works on `<slug>.margdarshakss.com` and on custom domains.
+2. **Same-origin calls** (`/api/...`): no CORS configuration, works on `<slug>.example.edu` and on custom domains.
 3. **Nothing a student runs can touch anything else**: not your other apps, not other students, not platform data.
 4. **Bounded cost** even under abuse.
 5. **Teacher control**: per-student switch, limits, a kill switch, visible state.
@@ -153,7 +153,7 @@ Other facts I would verify early in a one-day spike (section 9, Phase 1a):
 ### 5.1 Request path
 
 ```
-Browser ── https://alice.margdarshakss.com/api/hello?x=1
+Browser ── https://alice.example.edu/api/hello?x=1
    │
 CloudFront (student Distribution)
    ├─ default behavior  → S3 sites/alice/ ...                 (unchanged)
@@ -445,7 +445,7 @@ Same discipline as custom domains: a **temporary test student** created directly
 | A student abuses egress (spam, scanning) | Low to medium | Reputation, AWS abuse report | Teacher approval, logs, kill switch, accept and document residual risk |
 | IAM scoping mistake | Low | High | Template tests; separate account reduces blast radius |
 | Students cannot bundle dependencies | Medium | Support load | Starter templates, esbuild one-liner, clear checklist errors |
-| Tenant distribution cannot take `/api/*` | Unknown | Custom domains lack the backend | Spike first; fallback is the absolute URL `https://<slug>.margdarshakss.com/api` |
+| Tenant distribution cannot take `/api/*` | Unknown | Custom domains lack the backend | Spike first; fallback is the absolute URL `https://<slug>.example.edu/api` |
 | Cost surprise | Low | Medium | Budget alarm, rate limits, reserved concurrency |
 
 **Decisions I need from you**
@@ -471,7 +471,7 @@ Same discipline as custom domains: a **temporary test student** created directly
 
 - [ ] Pilot scope agreed (same account, quota still 10): the in-flight limiter is tested, including leak recovery, and student requests never hold more than 6 of the 10 slots. The quota increase is on the owner's to-do list before broader use.
 - [ ] A student with the switch **off** sees the owner message and cannot deploy (server returns 403).
-- [ ] With the switch on, the starter backend deploys from the portal **and** from the CLI, and `/api/health` returns 200 on `<slug>.margdarshakss.com`.
+- [ ] With the switch on, the starter backend deploys from the portal **and** from the CLI, and `/api/health` returns 200 on `<slug>.example.edu`.
 - [ ] A change to the function is live within seconds of publishing.
 - [ ] An environment variable set in the portal is visible to the function and never returned by any API.
 - [ ] Logs are viewable by the student and expire after 7 days.

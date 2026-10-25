@@ -49,7 +49,7 @@ Read it as three paths: **pages** (browser to CloudFront to S3, no code runs), *
 **What to understand**
 
 - **Behaviors.** The default behavior serves static files from S3; `/api/*` is a second behavior that goes to API Gateway with **caching disabled** (an API answer must never be shared between visitors) and forwards the `Authorization` header. One distribution, two very different jobs.
-- **Wildcard hosts as routing.** Every student site is `<name>.margdarshakss.com`. A DNS wildcard sends all of them to one distribution, and a **CloudFront Function** (JavaScript that runs at the edge before the cache is consulted) rewrites `alice.margdarshakss.com/cart` to the S3 key `sites/alice/cart`. No server, no per-student configuration. Open `RouterFunction` and read it: about 40 lines.
+- **Wildcard hosts as routing.** Every student site is `<name>.example.edu`. A DNS wildcard sends all of them to one distribution, and a **CloudFront Function** (JavaScript that runs at the edge before the cache is consulted) rewrites `alice.example.edu/cart` to the S3 key `sites/alice/cart`. No server, no per-student configuration. Open `RouterFunction` and read it: about 40 lines.
 - **Single-page-app fallback.** The same function turns an unknown path into `index.html` so a React router can take over. This is routing logic you would otherwise need a server for.
 - **Cache invalidation.** Publishing a site uploads files and then invalidates `/sites/<slug>/*`. Without it, visitors keep the old copy until the cache expires. Look at the invalidation calls in [lambda/app.py](../lambda/app.py).
 - **Functions versus Lambda@Edge versus Lambda.** CloudFront Functions are tiny, fast and cheap but can only look at and change the request (no network, no AWS calls). That is exactly enough for routing and for adding the real viewer IP as a header.
@@ -86,7 +86,7 @@ Read it as three paths: **pages** (browser to CloudFront to S3, no code runs), *
 
 - **Avoided: the student's API.** The site and its `/api/*` are on the **same address** (CloudFront routes `/api/*` to API Gateway). Same origin means no CORS at all, no allow-lists to maintain, no preflights, and cookies/headers behave simply. This is the main reason the architecture puts the API *behind the same CDN* instead of on its own `api.` host.
 - **Needed: browser uploads to S3.** The student page PUTs a zip to a presigned URL on the S3 domain: a different origin. So the bucket has a CORS rule (`CorsConfiguration` on `SitesBucket`): `PUT` allowed from the portal origin. For class storage, browsers also **POST** an upload form to S3 and **GET** a download link from a student's site, so a second rule allows `POST` and `GET` from any origin. Is `*` safe? Yes here, because the *signature* in the URL is what authorises the request; CORS only decides whether the browser lets a page read the answer. A request without a valid signature fails with 403 whichever origin sent it.
-- **The tell-tale evidence.** The live test sends `Origin: https://zz-backendtest.margdarshakss.com` with the upload and the download and checks that S3 answers with `Access-Control-Allow-Origin`. If you ever see an upload that works in a script but fails in the page, check that header first.
+- **The tell-tale evidence.** The live test sends `Origin: https://zz-backendtest.example.edu` with the upload and the download and checks that S3 answers with `Access-Control-Allow-Origin`. If you ever see an upload that works in a script but fails in the page, check that header first.
 
 **Try it yourself.** (1) Make `fetch('/api/health')` fail with a CORS error on purpose by pointing the page at the raw API Gateway URL; explain what you see in the browser console. (2) Why does an `<img src>` pointing at a presigned download URL work even without a CORS rule, while `fetch()` of the same URL does not?
 
@@ -234,7 +234,7 @@ flowchart TB
 
 ## 13. Walkthroughs: follow one request through every service
 
-**A visitor opens `https://alice.margdarshakss.com/`.** DNS (wildcard) → CloudFront (TLS with the wildcard certificate) → viewer-request function maps the host to `sites/alice/` and adds `index.html` → cache hit, or S3 read signed by OAC → bytes back, compressed. No Lambda ran.
+**A visitor opens `https://alice.example.edu/`.** DNS (wildcard) → CloudFront (TLS with the wildcard certificate) → viewer-request function maps the host to `sites/alice/` and adds `index.html` → cache hit, or S3 read signed by OAC → bytes back, compressed. No Lambda ran.
 
 **The page calls `/api/notes`.** Same CloudFront → behavior `/api/*` (no cache) → function sets `x-viewer-ip` and the path becomes `/b/alice/notes` → API Gateway `BackendApi` → gateway Lambda runs the checks and increments the run counter atomically → invokes `sd-alice` → response shaped and size-checked → back out.
 

@@ -143,6 +143,11 @@ await step('specification: the machine-checked facts in docs/TECHNICAL_SPECIFICA
   assert.equal(r.status, 0, r.stderr || r.stdout);
 });
 
+await step('identifiers: no account id, domain or distribution id of the maintainer in any tracked file', () => {
+  const r = spawnSync(python, [join(here, 'test_no_identifiers.py')], { encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr || r.stdout);
+});
+
 await step('diagrams: every Mermaid diagram in the docs has a current static PNG', () => {
   const r = spawnSync('node', [join(here, 'test_diagrams.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);
@@ -171,12 +176,12 @@ const route = (handler, host, uri) => {
 };
 
 await step('router: subdomain mode (RootDomain set)', () => {
-  const h = loadRouter('margdarshakss.com');
-  assert.equal(route(h, 'alice.margdarshakss.com', '/'), '/sites/alice/index.html');
-  assert.equal(route(h, 'alice.margdarshakss.com', '/cart/42'), '/sites/alice/index.html'); // SPA route
-  assert.equal(route(h, 'alice.margdarshakss.com', '/assets/x.css'), '/sites/alice/assets/x.css');
-  assert.equal(route(h, 'a.b.margdarshakss.com', '/'), '404');
-  assert.equal(route(h, 'Bad_Name.margdarshakss.com', '/'), '404');
+  const h = loadRouter('example.edu');
+  assert.equal(route(h, 'alice.example.edu', '/'), '/sites/alice/index.html');
+  assert.equal(route(h, 'alice.example.edu', '/cart/42'), '/sites/alice/index.html'); // SPA route
+  assert.equal(route(h, 'alice.example.edu', '/assets/x.css'), '/sites/alice/assets/x.css');
+  assert.equal(route(h, 'a.b.example.edu', '/'), '404');
+  assert.equal(route(h, 'Bad_Name.example.edu', '/'), '404');
   assert.equal(route(h, 'd123.cloudfront.net', '/alice/'), '/sites/alice/index.html'); // path mode still works
 });
 await step('router: path mode (RootDomain empty)', () => {
@@ -235,7 +240,7 @@ await step('tenant api route function: strips /api, passes the viewer IP', () =>
 });
 
 // ---- 3. End to end: real deploy.mjs -> real Lambda code -> fake AWS ----
-const server = spawn(python, [join(here, 'fake_api.py'), join(root, 'lambda'), String(PORT), 'margdarshakss.com'], { stdio: 'inherit' });
+const server = spawn(python, [join(here, 'fake_api.py'), join(root, 'lambda'), String(PORT), 'example.edu'], { stdio: 'inherit' });
 const state = async () => (await fetch(`http://127.0.0.1:${PORT}/`)).json();
 for (let i = 0; i < 50; i++) {
   if (await fetch(`http://127.0.0.1:${PORT}/`).then(() => true, () => false)) break;
@@ -257,7 +262,7 @@ try {
   await step('e2e: first deploy publishes all files with correct headers', async () => {
     const r = deploy();
     assert.equal(r.status, 0, r.stdout + r.stderr);
-    assert.match(r.stdout, /https:\/\/alice\.margdarshakss\.com\//);
+    assert.match(r.stdout, /https:\/\/alice\.example\.edu\//);
     const { objects, invalidations } = await state();
     assert.deepEqual(Object.keys(objects).sort(), ['sites/alice/assets/app.js', 'sites/alice/assets/old.css', 'sites/alice/index.html']);
     assert.match(objects['sites/alice/index.html'].CacheControl, /max-age=0/);

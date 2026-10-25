@@ -24,7 +24,7 @@
         "Id": "sites",
         "DomainName": "student-hosting-sitesbucket-pi9xyysg5smo.s3.us-east-1.amazonaws.com",
         "OriginPath": "/sites/{{student}}",
-        "OriginAccessControlId": "E35NKLYVBXWXX4",
+        "OriginAccessControlId": "<ORIGIN_ACCESS_CONTROL_ID>",
         "S3OriginConfig": {
           "OriginAccessIdentity": ""
         }
@@ -80,7 +80,7 @@
       "Items": [
         {
           "EventType": "viewer-request",
-          "FunctionARN": "arn:aws:cloudfront::417780655868:function/student-hosting-spa-fallback"
+          "FunctionARN": "arn:aws:cloudfront::<ACCOUNT_ID>:function/student-hosting-spa-fallback"
         }
       ]
     }
@@ -119,7 +119,7 @@
           "Items": [
             {
               "EventType": "viewer-request",
-              "FunctionARN": "arn:aws:cloudfront::417780655868:function/student-hosting-tenant-api"
+              "FunctionARN": "arn:aws:cloudfront::<ACCOUNT_ID>:function/student-hosting-tenant-api"
             }
           ]
         }

@@ -12,7 +12,7 @@ One custom domain per student. Student adds one CNAME at their own DNS host; HTT
 
 ## Source of truth
 THIS folder (`D:\Github_Codes\student-deploy`) is the project deployed to the AWS stack `student-hosting`
-(us-east-1, account 417780655868). Do NOT run `sam deploy` from any other copy: a different template
+(us-east-1, account <ACCOUNT_ID>). Do NOT run `sam deploy` from any other copy: a different template
 deletes the portal, tokens table and sweeper (this happened once on 2026-10-20 and was restored).
 
 Safe deploy routine: `sam deploy --no-execute-changeset --no-confirm-changeset`, then
@@ -23,10 +23,10 @@ Safe deploy routine: `sam deploy --no-execute-changeset --no-confirm-changeset`,
 | Thing | Value |
 |---|---|
 | CloudFront function (SPA fallback) | `student-hosting-spa-fallback` (source: spa-fallback.js) |
-| Multi-tenant distribution (template) | `E1NTIC3LHBW49Q` (config: tenant-distribution.json); origin path `/sites/{{student}}` |
-| Connection group routing endpoint | `d4cls3ve04vi3.cloudfront.net` (students CNAME to this) |
+| Multi-tenant distribution (template) | `<TENANT_DISTRIBUTION_ID>` (config: tenant-distribution.json); origin path `/sites/{{student}}` |
+| Connection group routing endpoint | `<id>.cloudfront.net` (students CNAME to this) |
 | Test tenant | `dt_3Kx75dP05KtCYq2S1o7o05xUBar`, domain `test.tripnaama.com`, student param `smoketest` |
-| Test DNS (Cloudflare, DNS only) | `test` CNAME -> `d4cls3ve04vi3.cloudfront.net`. Never touch `tripnaama.com` itself |
+| Test DNS (Cloudflare, DNS only) | `test` CNAME -> `<id>.cloudfront.net`. Never touch `tripnaama.com` itself |
 
 The test tenant currently returns 403: this project's bucket policy only allows `Distribution` and
 `PortalDistribution`. Fix when porting: allow the multi-tenant distribution ARN (or `distribution/*` in the account).
@@ -53,7 +53,7 @@ The test tenant currently returns 403: this project's bucket policy only allows 
   Port the UI into `web/student.html` / `web/student.js`, and add the teacher switch to `web/teacher.*`.
 
 ## Port plan
-1. template.yaml: Lambda env `TENANT_DISTRIBUTION_ID=E1NTIC3LHBW49Q`, `ROUTING_ENDPOINT=d4cls3ve04vi3.cloudfront.net`;
+1. template.yaml: Lambda env `TENANT_DISTRIBUTION_ID=<TENANT_DISTRIBUTION_ID>`, `ROUTING_ENDPOINT=<id>.cloudfront.net`;
    IAM for `cloudfront:*DistributionTenant*`, `GetManagedCertificateDetails`, `acm:*Certificate*`; bucket policy
    widened for the multi-tenant distribution; a place to store per-student settings (extend TokensTable or add a table).
 2. lambda/portal.py: student session routes `GET /api/student/domain`, `PUT`, `DELETE`, `GET .../status`

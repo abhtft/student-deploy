@@ -9,11 +9,11 @@
 | Release | **1.0 (MVP)**, baseline date 2026-10-23 |
 | Product | Class Hosting Platform: a controlled place where a teacher gives students expiring tokens, and students publish a website, a small backend and (optionally) an AI key, mostly by pushing to GitHub |
 | Code base | this repository, branch `feature/custom-domains-and-portal-hosting` (the release baseline is the commit that adds this document; `git log -1` shows it) |
-| Production | AWS account of the owner, region `us-east-1`, CloudFormation stack `student-hosting` (status `UPDATE_COMPLETE`), portal `https://deploy.margdarshakss.com`, student sites `https://<name>.margdarshakss.com` |
+| Production | AWS account of the owner, region `us-east-1`, CloudFormation stack `student-hosting` (status `UPDATE_COMPLETE`), portal `https://deploy.example.edu`, student sites `https://<name>.example.edu` |
 | Student kit | version `1.6.0` in the repository (`starter/template/platform.json`); the portal serves what `node admin.mjs portal-publish` last published (the kit zip and `kit-version.json`, the MCP package `class-platform-mcp-<version>.tgz`, the alias `class-platform-mcp.tgz` and `mcp-version.json`). MCP package version `1.0.0` (`starter/mcp/package.json`). **Until `portal-publish` is run the portal still serves kit 1.5.1 and no package** |
 | Audience | the owner/operator, future maintainers, anyone reviewing the design or the security |
 | Change rule | any change to behaviour, limits, resources or flows updates this document **in the same commit**; the machine-checked block (section 14) fails the test run if a number drifts |
-| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** (section 4.14) **deployed to production** on 2026-10-24 (`StorageEnabled="true"`, change set reviewed first: seven resources added, the rest modified in place, nothing replaced) and verified by 27 live checks (section J of `tests/live_smoke.py`); it is off for every student until the teacher switches it on. Kit 1.4.0 and the updated portal pages are published. Local suite is now 35 steps. **Kit 1.6.0 and `class-platform-mcp` 1.0.0, published 2026-10-24:** an AI editor is connected with one `npx` command and no kit download (section 4.15); the token can be saved once for the whole computer; `init_project` creates the starter in an empty folder. **Kit 1.5.0** (student-side sync, section 4.15): a one-line update notice, the MCP `update_kit` tool, `update` adds missing `package.json` scripts, `minKit` in `kit-version.json`, and a written compatibility rule (section 4.11). **Kit 1.5.1** (found in the owner's first real Antigravity run: the printed instructions had been pasted into the JSON config file, and the entry was missing its `mcpServers` wrapper): `npm run mcp-config` now prints a complete file between two marker lines, and `-- --json` prints only the JSON. **Verified in real editors:** VS Code and Antigravity both connected to the MCP server (owner, 2026-10-24). **2026-10-24 (later):** the teacher dashboard was redesigned (summary tiles, student list, a detail panel that opens on click, a Storage tab) and the teacher can now **clear a student's storage** and see **storage across the class** (sizes and counts only; section 4.14), deployed and verified live (110 live checks, including the IAM scope of the portal function). Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
+| Changes since the baseline | **2026-10-24.** Documentation diagrams are PNG images with the Mermaid source collapsed beneath (section 7.1). Student kit **1.2.0** (`npm run login`), **1.3.0** (MCP server for AI editors, `npm run deploy` without GitHub described in section 4.15), **1.3.1** (masked token prompt), **1.4.0** (class storage helpers and sample). **Class storage connector** (section 4.14) **deployed to production** on 2026-10-24 (`StorageEnabled="true"`, change set reviewed first: seven resources added, the rest modified in place, nothing replaced) and verified by 27 live checks (section J of `tests/live_smoke.py`); it is off for every student until the teacher switches it on. Kit 1.4.0 and the updated portal pages are published. Local suite is now 36 steps. **Kit 1.6.0 and `class-platform-mcp` 1.0.0, published 2026-10-24:** an AI editor is connected with one `npx` command and no kit download (section 4.15); the token can be saved once for the whole computer; `init_project` creates the starter in an empty folder. **Kit 1.5.0** (student-side sync, section 4.15): a one-line update notice, the MCP `update_kit` tool, `update` adds missing `package.json` scripts, `minKit` in `kit-version.json`, and a written compatibility rule (section 4.11). **Kit 1.5.1** (found in the owner's first real Antigravity run: the printed instructions had been pasted into the JSON config file, and the entry was missing its `mcpServers` wrapper): `npm run mcp-config` now prints a complete file between two marker lines, and `-- --json` prints only the JSON. **Verified in real editors:** VS Code and Antigravity both connected to the MCP server (owner, 2026-10-24). **2026-10-24 (later):** the teacher dashboard was redesigned (summary tiles, student list, a detail panel that opens on click, a Storage tab) and the teacher can now **clear a student's storage** and see **storage across the class** (sizes and counts only; section 4.14), deployed and verified live (110 live checks, including the IAM scope of the portal function). Everything in this row is described in the sections named; the baseline row below is kept as the historical record. |
 | Verification state at baseline | 28 local test steps pass (`node tests/run.mjs`, including the specification check), GitHub CI is green, the live smoke test (`python tests/live_smoke.py`) passes 74 checks against production, and the owner tested the full student journey end to end |
 
 ### How to read this document
@@ -33,7 +33,7 @@ A teacher wants many students to publish real web projects (a site, a backend, A
 | # | Goal |
 |---|---|
 | G1 | A teacher issues **expiring tokens** (1 to 365 days) and can extend, revoke, take a site offline, and approve or deny regeneration requests |
-| G2 | A student with a token publishes a **static website** to `https://<name>.margdarshakss.com` without any cloud account |
+| G2 | A student with a token publishes a **static website** to `https://<name>.example.edu` without any cloud account |
 | G3 | A student can have one **custom domain**, only when the teacher allows it |
 | G4 | A student can run **one backend function** (Python 3.12 or Node 22) reached at `/api/...` on their own address, with a teacher on/off switch and a **run allowance** |
 | G5 | The teacher can give a student's backend an **AI key** with a dollar cap, switched on per student |
@@ -168,7 +168,7 @@ flowchart TB
 |---|---|---|
 | Student-site CDN | `Distribution` + `RouterFunction` | serves `sites/<slug>/` for `<slug>.<RootDomain>`; SPA fallback; `/api/*` to the backend with `BackendRouteFunction` (host to `/b/<slug>/...`, real viewer IP) |
 | Portal CDN | `PortalDistribution` + `PortalFunction` | serves `portal/` (pages and downloads) at `deploy.<RootDomain>`; `/api/*` to `DeployApi`; clean URLs (`/teacher` to `teacher.html`) |
-| Custom-domain CDN | created by hand: multi-tenant distribution `E1NTIC3LHBW49Q`, functions `student-hosting-spa-fallback` and `student-hosting-tenant-api`, origin access control, connection group (see [END_TO_END.md section 4.4](END_TO_END.md)) | one *distribution tenant* per student domain; **not in CloudFormation** (known gap) |
+| Custom-domain CDN | created by hand: multi-tenant distribution `<TENANT_DISTRIBUTION_ID>`, functions `student-hosting-spa-fallback` and `student-hosting-tenant-api`, origin access control, connection group (see [END_TO_END.md section 4.4](END_TO_END.md)) | one *distribution tenant* per student domain; **not in CloudFormation** (known gap) |
 | Storage | `SitesBucket` (+ policy, origin access control `SitesOAC`) | `sites/`, `uploads/`, `archive/`, `portal/`; versioning on; lifecycle rules |
 | Token store | `TokensTable` | the single DynamoDB table (key `pk`), on demand, point-in-time recovery on |
 | Portal and CLI API | `DeployApi` + `DeployFunction` (`lambda/app.py`, 1024 MB, 29 s) | all `/api/...` portal routes, the legacy CLI routes, frontend publishing, backends control plane, AI control plane |
@@ -804,11 +804,11 @@ Error shape: JSON `{"error": "<code or message>"}` (gateway errors: `{"error": "
 
 | Parameter | Default | Deployed | Meaning |
 |---|---|---|---|
-| `RootDomain` | none | `margdarshakss.com` | student sites are `<slug>.<RootDomain>`, portal is `deploy.<RootDomain>` |
+| `RootDomain` | none | `example.edu` | student sites are `<slug>.<RootDomain>`, portal is `deploy.<RootDomain>` |
 | `CertificateArn` | none | (an ACM wildcard certificate in us-east-1) | TLS for the two distributions |
 | `PortalAlias` | `false` | `true` | attach the portal host name to `PortalDistribution` (two-phase DNS cutover) |
-| `TenantDistributionId` | empty | `E1NTIC3LHBW49Q` | the hand-made multi-tenant distribution; empty switches custom domains off |
-| `RoutingEndpoint` | empty | `d4cls3ve04vi3.cloudfront.net` | the CNAME target students use |
+| `TenantDistributionId` | empty | `<TENANT_DISTRIBUTION_ID>` | the hand-made multi-tenant distribution; empty switches custom domains off |
+| `RoutingEndpoint` | empty | `<id>.cloudfront.net` | the CNAME target students use |
 | `BackendEnabled` | `false` | `true` | student backends (Backend API, gateway, `/api/*` route) |
 | `OfflineGraceDays` | `3` | `3` | read-only period after expiry |
 | `KeysParameterName`, `TeacherParameterName` | `/student-deploy/keys`, `/student-deploy/teacher` | same | legacy keys map; teacher account |
@@ -996,7 +996,7 @@ Stop one student's AI or backend with the teacher switches (effective within abo
 
 ## 11. Quality evidence at baseline
 
-- Local suite: 35 steps green (including the specification check and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
+- Local suite: 36 steps green (including the specification check, the identifier guard and the diagram image check), including mutation-tested guards on the allowance, limiter, IAM scopes, AI lifecycle, helper error mapping, checker rules and the update command.
 - CI: green on the baseline commit.
 - Production: stack `UPDATE_COMPLETE`; live smoke test 74 checks passed at the baseline and 110 pass now (36 new ones are class storage, section J, including clearing and an IAM simulation of the portal function's role); the owner completed the student journey end to end (token, kit download, AI editor, push, deploy, class AI).
 - AI evaluation of the kit: 13 agent runs, all pass the platform's gates; both adversarial prompts refused correctly.
@@ -1046,7 +1046,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
 | 9 | Several teacher accounts; Content-Security-Policy; "Request more runs" from the student | backlog |
 | 10 | Whether each AI editor actually loads the rule files (agents in the evaluation were told to read `AGENTS.md`) | not verified |
 | 12 | Class storage: **deployed and live-tested** (36 live checks, including the presigned upload to real S3, S3's own size refusal, CORS headers and the off switch). Still open: the API throttle was not load-tested; decide whether the data table needs point-in-time recovery; pilot with real students | partly done |
-| 16 | The MCP package (`npx` from the portal URL, `setup`, `init_project`, roots) is tested end to end against the dev portal and **published** (a real `npx -y https://deploy.margdarshakss.com/class-platform-mcp.tgz version` was run against production); **not yet run in a real editor by the owner**: the editors' settings paths are the part most likely to differ between versions (Cursor and Claude Code are not set up by `setup`; the *Add to VS Code* install link is untried) | open: the owner's check in VS Code and Antigravity |
+| 16 | The MCP package (`npx` from the portal URL, `setup`, `init_project`, roots) is tested end to end against the dev portal and **published** (a real `npx -y https://deploy.example.edu/class-platform-mcp.tgz version` was run against production); **not yet run in a real editor by the owner**: the editors' settings paths are the part most likely to differ between versions (Cursor and Claude Code are not set up by `setup`; the *Add to VS Code* install link is untried) | open: the owner's check in VS Code and Antigravity |
 | 13 | MCP server in real editors: **VS Code and Antigravity both confirmed by the owner.** VS Code needs the one-click *Migrate* that newer versions offer (it rewrites `.vscode/mcp.json` to `.mcp.json` with absolute paths and `"type": "local"`); the kit keeps shipping `.vscode/mcp.json` because a portable `.mcp.json` would need `${workspaceFolder}` to be expanded, which is unconfirmed. Antigravity needs the pasted file to be pure JSON with the `mcpServers` wrapper (kit 1.5.1 prints exactly that). Not yet exercised in a real editor: `update_kit` and the update notice | mostly verified |
 | 14 | **Re-run the AI evaluation** against the kit 1.2 to 1.5 rules (Deploying, class storage, keeping the kit current) | open |
 | 15 | `platform update` now adds missing kit scripts (kit 1.5.0); a project on kit 1.1 to 1.4 needs `update --apply` twice (the first run brings the new `platform.mjs`) | resolved, with that one caveat |
@@ -1107,7 +1107,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
   "kitVersion": "1.6.0",
   "mcpPackage": { "version": "1.0.0" },
-  "testSteps": 35,
+  "testSteps": 36,
   "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx", "storage-errors"]
 }
 ```
@@ -1141,7 +1141,7 @@ Portal API errors use the same `{"error": "message"}` shape with these statuses:
 | Term | Meaning |
 |---|---|
 | Token | the secret a student signs in with (`mds_...`); stored only as a hash |
-| Slug | the student's site name, the `<name>` in `<name>.margdarshakss.com` |
+| Slug | the student's site name, the `<name>` in `<name>.example.edu` |
 | Run | one request that reached a student's function (counted against the allowance) |
 | Gateway | the Lambda through which every student-backend request passes |
 | Sweeper | the daily Lambda that archives expired sites and syncs AI keys |
