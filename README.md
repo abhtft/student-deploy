@@ -34,6 +34,7 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | **[docs/AWS_LEARNINGS.md](docs/AWS_LEARNINGS.md)** | **A learning guide to the AWS ideas in this project:** CloudFront, S3 and presigned uploads, CORS, IAM and least privilege, Lambda limits, API Gateway, DynamoDB design, CloudFormation change sets, secrets, security mindset, cost, testing against the real account, a log of real mistakes and exercises |
 | **[docs/STORAGE_CONNECTOR.md](docs/STORAGE_CONNECTOR.md)** | **Class storage connector (live, off per student until the teacher switches it on):** a capped per-student database and file area for backends, how isolation and cost are controlled, how to switch it on |
 | **[docs/AI_CONNECTOR.md](docs/AI_CONNECTOR.md)** | **Class AI connector:** workflow diagrams (setup, teacher on/off, a student's AI call, key lifecycle), where each secret lives, threat model, IAM matrix, operations and emergencies |
+| **[docs/NEW_ACCOUNT_AND_TRANSFER.md](docs/NEW_ACCOUNT_AND_TRANSFER.md)** | **New AWS account and project transfer:** two accounts with CLI profiles, what a new account needs (credits, CloudFront verification), the install without the SAM CLI (verified), and the designed installer and export/import between accounts (not built yet) |
 | **[docs/END_TO_END.md](docs/END_TO_END.md)** | **The complete workflow:** architecture, how requests travel, teacher and student workflows, setup, operations, verification, security, troubleshooting, limits |
 | [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Every HTTP route, request, response and error code |
 | [implement.md](implement.md) | Step-by-step setup and verification (Parts 1 to 4) |
@@ -41,7 +42,7 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | [backend_wire.md](backend_wire.md) | Design reasoning for student backends |
 | [learning.md](learning.md) | Lessons learned, mistakes and fixes |
 
-## Web portal (deploy.margdarshakss.com)
+## Web portal (deploy.example.edu)
 
 Besides the CLI, there is a web portal with two sections, each with its own login:
 
@@ -51,7 +52,7 @@ Besides the CLI, there is a web portal with two sections, each with its own logi
 Token life: active until expiry, then 3 days read-only (the site stays online and the student can request regeneration), then the site goes **offline** (moved to `archive/`, never deleted). Approving a request or extending the token restores it.
 
 ```
-deploy.margdarshakss.com ─ CloudFront ─┬─ /*     → S3 portal/ (the pages in web/)
+deploy.example.edu ─ CloudFront ─┬─ /*     → S3 portal/ (the pages in web/)
                                        └─ /api/* → API Gateway → Lambda → DynamoDB
 Daily: sweeper Lambda archives sites past expiry + grace
 ```
