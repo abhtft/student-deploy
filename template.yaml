@@ -599,9 +599,6 @@ Resources:
       Architectures: [arm64]
       MemorySize: 256
       Timeout: 29 # Gemini answers take seconds; the HTTP API waits at most 30
-      Environment:
-        Variables:
-          AI_PROXY_URL: !Sub 'https://${AiProxyApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}'
       Policies:
         - Statement:
             - Effect: Allow # the key lookup and the usage counters live in the tokens table

@@ -43,6 +43,11 @@ def proxy_url():
     return os.environ.get("AI_PROXY_URL", "").rstrip("/")
 
 
+def gemini_enabled():
+    """The feature flag alone (the proxy function does not know its own address: a function cannot refer to the API that calls it)."""
+    return available() and os.environ.get("AI_GEMINI_ENABLED", "") == "true"
+
+
 def gemini_available():
     """Gemini needs the platform's own proxy (Google has no per-student keys); see gemini.py and ai_proxy.py."""
     return available() and os.environ.get("AI_GEMINI_ENABLED", "") == "true" and bool(proxy_url())

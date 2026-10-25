@@ -53,7 +53,7 @@ def authenticate(headers, now):
     if status != "active":
         raise ProxyError(403, "token_inactive", f"This site's token is {status}, so its AI is paused.")
     s = ai.settings(item)
-    if not (ai.gemini_available() and s.get("enabled") and ai.provider(item) == "gemini"):
+    if not (ai.gemini_enabled() and s.get("enabled") and ai.provider(item) == "gemini"):
         raise ProxyError(403, "not_enabled", "Class AI (Gemini) is switched off for you. Ask your teacher.")
     return item
 
