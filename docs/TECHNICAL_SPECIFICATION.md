@@ -1,6 +1,6 @@
 # Class Hosting Platform: Technical Specification (Release 1.0, MVP)
 
-> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md), [AWS_LEARNINGS.md](AWS_LEARNINGS.md) (a learning guide, not an operating document), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.py` on every test run.
+> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md), [MCP.md](MCP.md), [AWS_LEARNINGS.md](AWS_LEARNINGS.md) (a learning guide, not an operating document), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.py` on every test run.
 
 ## 0. Document control
 
