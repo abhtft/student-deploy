@@ -1,5 +1,17 @@
 # Student frontend hosting (teacher setup)
 
+## Get your own copy running (teachers)
+
+You need an AWS account, Node 20+ and the AWS CLI signed in (`aws configure`). Then one command, no download and no git:
+
+```bash
+npx -y https://github.com/<owner>/<repo>/releases/latest/download/class-platform-teacher.tgz install
+```
+
+It asks for your AWS profile, an optional domain, which features you want and your teacher login, then installs everything into **your** account (10 to 15 minutes). Later, each new release is one command (the release page shows it): `npx -y https://github.com/<owner>/<repo>/releases/download/v<new>/class-platform-teacher-<new>.tgz upgrade`. Step by step: [docs/TEACHER_SETUP.md](docs/TEACHER_SETUP.md).
+
+---
+
 Every student publishes their built frontend (`dist/`) to **your** AWS account with one command:
 
 ```bash

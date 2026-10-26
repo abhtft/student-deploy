@@ -1,7 +1,7 @@
 // `class-platform-teacher-mcp setup`: add the server to VS Code and Antigravity (one entry called "class-platform-teacher"; other servers are never
 // touched; a backup is made; a settings file with comments is left alone and the exact text is printed instead).
 //
-//   npx -y class-platform-teacher@<version> editor [--yes] [--dry-run] [--editors vscode,antigravity|none]
+//   npx -y <release tarball or class-platform-teacher@<version>> editor [--yes] [--dry-run] [--editors vscode,antigravity|none]
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -19,9 +19,18 @@ const packageVersion = () => {
   return '0.0.0';
 };
 
-/** What the editor runs: npx with the pinned version (Windows editors need cmd /c to find npx). */
-export function entryFor(version = packageVersion(), platform = process.platform) {
-  const npx = ['-y', `${PACKAGE}@${version}`, 'mcp'];
+/** Where this package was released (stamped into release.json when it was built): a GitHub repository, or '' for the npm registry. */
+const releaseRepo = () => {
+  for (const file of [join(here, '..', 'release.json'), join(here, 'release.json')]) {
+    try { const r = JSON.parse(readFileSync(file, 'utf8')); if (r.repo) return r.repo; } catch { /* try the next place */ }
+  }
+  return '';
+};
+
+/** What the editor runs: npx with the pinned release (a GitHub Release file when the package knows its repository, else the npm name). Windows editors need cmd /c to find npx. */
+export function entryFor(version = packageVersion(), platform = process.platform, repo = releaseRepo()) {
+  const source = repo ? `https://github.com/${repo}/releases/download/v${version}/${PACKAGE}-${version}.tgz` : `${PACKAGE}@${version}`;
+  const npx = ['-y', source, 'mcp'];
   return platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...npx] } : { command: 'npx', args: npx };
 }
 

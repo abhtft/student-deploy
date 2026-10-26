@@ -159,6 +159,25 @@ const fails = async (fn, pattern) => { try { await fn(); } catch (e) { assert.ma
   console.log('  ok  status reads the account, lists the features and notices a newer version in the folder');
 }
 
+// ---------- a newer GitHub release is announced with the exact command ----------
+{
+  const fake = fakeAws({ stack: 'UPDATE_COMPLETE', parameters: {} });
+  const answer = (tag) => async () => ({ status: 200, json: async () => ({ tag_name: tag }) });
+  writeFileSync(join(repo, 'release.json'), JSON.stringify({ repo: 'someone/class-platform', version: '1.1.0' }));
+  const { ctx } = context(fake, { fetch: answer('v1.2.0') });
+  const newer = await engine.status(ctx);
+  assert.equal(newer.newerRelease, true);
+  assert.equal(newer.upgradeCommand, 'npx -y https://github.com/someone/class-platform/releases/download/v1.2.0/class-platform-teacher-1.2.0.tgz upgrade');
+  assert.match(newer.message, /Version 1\.2\.0 is out/);
+  assert.equal((await engine.status({ ...ctx, fetch: answer('v1.1.0') })).newerRelease, false, 'the same version is not news');
+  assert.equal((await engine.status({ ...ctx, fetch: answer('latest; rm -rf /') })).latestVersion, null, 'only a plain version number is accepted from the answer');
+  assert.equal((await engine.status({ ...ctx, fetch: async () => { throw new Error('offline'); } })).newerRelease, false, 'offline is not an error');
+  assert.ok(engine.newerThan('1.10.0', '1.9.9') && !engine.newerThan('1.0.0', '1.0.0') && !engine.newerThan('0.9.0', '1.0.0'));
+  rmSync(join(repo, 'release.json'));
+  assert.equal((await engine.status(context(fake).ctx)).latestVersion, null, 'a git checkout has no release to compare with');
+  console.log('  ok  status announces a newer GitHub release with the exact command, ignores odd answers and offline');
+}
+
 // ---------- a fresh clone adopts the stack that already exists ----------
 {
   reset();

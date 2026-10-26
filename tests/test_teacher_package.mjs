@@ -15,7 +15,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const repo = join(here, '..');
 const work = mkdtempSync(join(tmpdir(), 'teacher-package-'));
 const out = join(work, 'package');
-const built = buildTeacherPackage(out);
+const built = buildTeacherPackage(out, { pack: false, repo: 'someone/class-platform' });
 const walk = (dir) => readdirSync(dir, { withFileTypes: true }).flatMap((e) => (e.isDirectory() ? walk(join(dir, e.name)) : [relative(out, join(dir, e.name)).replace(/\\/g, '/')]));
 const all = walk(out);
 
@@ -68,9 +68,10 @@ assert.equal(run(['version']).stdout.trim(), pkg.version);
 assert.match(run(['help']).stdout, /guided install into your own AWS account/);
 const home = join(work, 'home');
 const editor = run(['editor', '--dry-run', '--editors', 'none']);
-assert.match(editor.stdout, /class-platform-teacher@/);
 assert.match(editor.stdout, /"mcp"/, 'the editor entry runs the package with the mcp command');
-assert.ok(editor.stdout.includes(`class-platform-teacher@${pkg.version}`), 'pinned to this exact version');
+assert.ok(editor.stdout.includes(`https://github.com/someone/class-platform/releases/download/v${pkg.version}/class-platform-teacher-${pkg.version}.tgz`), 'pinned to this exact release file on GitHub');
+assert.deepEqual(JSON.parse(readFileSync(join(out, 'release.json'), 'utf8')), { repo: 'someone/class-platform', version: pkg.version, tag: `v${pkg.version}`, url: `https://github.com/someone/class-platform/releases/download/v${pkg.version}/class-platform-teacher-${pkg.version}.tgz` });
+assert.throws(() => buildTeacherPackage(join(work, 'bad'), { repo: 'not a repo' }), /owner\/name/);
 const unknown = run(['teacher']);
 assert.notEqual(unknown.status, 0, 'a command with a missing argument fails with a message, not a crash');
 const ejected = join(work, 'ejected');
@@ -78,6 +79,16 @@ assert.equal(run(['eject', ejected]).status, 0);
 assert.ok(existsSync(join(ejected, 'template.yaml')) && !existsSync(join(ejected, '.packaged')), 'an ejected copy is a normal folder (state stays next to it)');
 assert.notEqual(run(['eject', ejected]).status, 0, 'eject refuses a folder that is not empty');
 console.log('  ok  version, help, editor entry (pinned), eject, and a clear failure for a missing argument');
+
+// ---------- the files of a GitHub Release ----------
+const release = join(work, 'release');
+const packed = buildTeacherPackage(join(work, 'packed'), { pack: true, repo: 'someone/class-platform', releaseDir: release });
+assert.deepEqual(readdirSync(release).sort(), [`${PACKAGE_NAME}-${pkg.version}.tgz`, `${PACKAGE_NAME}.tgz`, 'sha256sums.txt']);
+const sums = readFileSync(join(release, 'sha256sums.txt'), 'utf8').trim().split(/\r?\n/).map((l) => l.split('  '));
+for (const [hash, file] of sums) assert.equal(createHash('sha256').update(readFileSync(join(release, file))).digest('hex'), hash, `${file} matches its checksum`);
+assert.equal(readFileSync(join(release, `${PACKAGE_NAME}.tgz`)).equals(readFileSync(join(release, `${PACKAGE_NAME}-${pkg.version}.tgz`))), true, 'the version-less alias is the same file');
+assert.ok(packed.release.length === 3);
+console.log('  ok  release files: pinned tarball, version-less alias, checksums that match; repository stamped into the package');
 
 // ---------- state lives in the home folder when run from the package ----------
 const engine = await import(`file:///${join(out, 'installer', 'engine.mjs').replace(/\\/g, '/')}`);

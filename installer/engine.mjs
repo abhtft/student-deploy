@@ -76,6 +76,14 @@ export function adoptState(ctx) {
   return state;
 }
 
+/** How the teacher runs this tool, for messages: from the npm/GitHub package it is an npx command, from a clone `node setup.mjs`. */
+export function cli(ctx) {
+  if (!existsSync(join(ctx.repo, '.packaged'))) return 'node setup.mjs';
+  let repo = '';
+  try { repo = JSON.parse(readFileSync(join(ctx.repo, 'release.json'), 'utf8')).repo; } catch { /* no stamp */ }
+  return repo ? `npx -y https://github.com/${repo}/releases/latest/download/class-platform-teacher.tgz` : 'npx -y class-platform-teacher';
+}
+
 export const repoVersion = (ctx) => { try { return readFileSync(join(ctx.repo, 'VERSION'), 'utf8').trim(); } catch { return '0.0.0'; } };
 
 /** Check the choices and return them in their final form. Everything a teacher can choose is here. */
@@ -195,7 +203,7 @@ export async function install(ctx, input) {
   const config = normalise({ ...input, profile: ctx.profile, stack: ctx.stack });
   const found = preflight(ctx);
   if (found.stackStatus === 'ROLLBACK_COMPLETE') throw new InstallError(`The stack "${ctx.stack}" is in a failed state (ROLLBACK_COMPLETE) from an earlier attempt.`, `Delete it first: aws cloudformation delete-stack --stack-name ${ctx.stack}${ctx.profile ? ` --profile ${ctx.profile}` : ''}`);
-  if (found.stackStatus && !found.stackStatus.endsWith('_FAILED') && !/ROLLBACK/.test(found.stackStatus)) throw new InstallError(`The stack "${ctx.stack}" already exists (${found.stackStatus}).`, 'Use `node setup.mjs upgrade` to change or update it.');
+  if (found.stackStatus && !found.stackStatus.endsWith('_FAILED') && !/ROLLBACK/.test(found.stackStatus)) throw new InstallError(`The stack "${ctx.stack}" already exists (${found.stackStatus}).`, `Use \`${cli(ctx)} upgrade\` to change or update it.`);
   const result = { ok: true, account: found.account, stack: ctx.stack, steps: [], notes: found.notes };
   if (config.domain) {
     const cert = await ensureCertificate(ctx, config.domain);
@@ -221,13 +229,13 @@ async function finishInstall(ctx, config, outputs) {
   adminScript(ctx, ['portal-publish']);
   const portalUrl = outputs.PortalUrl ?? (config.domain ? `https://deploy.${config.domain}/` : '');
   const checks = ctx.dryRun || !portalUrl ? [] : await smoke(ctx, portalUrl);
-  return { portalUrl, checks, steps: ['portal published'], next: 'Create your teacher login: node setup.mjs teacher <username>' };
+  return { portalUrl, checks, steps: ['portal published'], next: `Create your teacher login: ${cli(ctx)} teacher <username>` };
 }
 
 /** The second step of a domain install: attach deploy.<domain> to the portal now that DNS points at it. */
 export async function finishDomain(ctx) {
   const state = readState(ctx);
-  if (!state?.domain || state.phase !== 'dns') throw new InstallError('There is no domain install waiting for DNS.', 'Run `node setup.mjs install --domain <name>` first.');
+  if (!state?.domain || state.phase !== 'dns') throw new InstallError('There is no domain install waiting for DNS.', `Run \`${cli(ctx)} install --domain <name>\` first.`);
   const bucket = ensureArtifactBucket(ctx, state.account);
   const packaged = packageTemplate(ctx, bucket);
   call(ctx, deployArgs(ctx, packaged, parametersFor(state, { aliasOn: true })));
@@ -242,17 +250,46 @@ export function teacherLogin(ctx, username, password) {
   return { ok: true, username };
 }
 
+// ---------- is a newer release out? ----------
+export const newerThan = (a, b) => {
+  const pa = String(a).split('.').map(Number);
+  const pb = String(b).split('.').map(Number);
+  for (let i = 0; i < 3; i += 1) { if ((pa[i] || 0) !== (pb[i] || 0)) return (pa[i] || 0) > (pb[i] || 0); }
+  return false;
+};
+
+/** The repository this package was released from (stamped when it was built), or null for a git checkout. */
+export function releaseInfo(ctx) {
+  try { const r = JSON.parse(readFileSync(join(ctx.repo, 'release.json'), 'utf8')); return r.repo ? r : null; } catch { return null; }
+}
+
+/** Ask GitHub for the newest release of that repository (two seconds at most; null when it cannot say). Only a version number is read from the answer. */
+export async function latestRelease(ctx) {
+  const info = releaseInfo(ctx);
+  if (!info) return null;
+  try {
+    const response = await (ctx.fetch ?? fetch)(`https://api.github.com/repos/${info.repo}/releases/latest`, { signal: AbortSignal.timeout(2000), headers: { accept: 'application/vnd.github+json' } });
+    if (response.status !== 200) return null;
+    const version = String((await response.json()).tag_name ?? '').replace(/^v/, '');
+    if (!/^\d+\.\d+\.\d+$/.test(version)) return null;
+    return { version, command: `npx -y https://github.com/${info.repo}/releases/download/v${version}/class-platform-teacher-${version}.tgz upgrade` };
+  } catch { return null; }
+}
+
 // ---------- status ----------
 export async function status(ctx) {
   const state = adoptState(ctx);
   const info = { ok: true, repoVersion: repoVersion(ctx), installedVersion: state?.installedVersion ?? null, installed: false };
-  if (!state) return { ...info, message: 'Nothing is installed from this folder yet. Run `node setup.mjs install`.' };
+  if (!state) return { ...info, message: `Nothing is installed yet. Run \`${cli(ctx)} install\`.` };
   const stackName = state.stack ?? ctx.stack;
   const now = stackOutputs({ ...ctx, stack: stackName });
   const features = Object.entries(FEATURES).filter(([, p]) => now.parameters[p] === 'true').map(([f]) => f);
   const upgrade = info.installedVersion !== info.repoVersion; // an adopted install has no recorded version: the next plan will say what differs
+  const latest = await latestRelease(ctx);
+  const newer = latest && newerThan(latest.version, info.repoVersion);
   return { ...info, installed: true, stack: stackName, stackStatus: now.status, portalUrl: now.outputs.PortalUrl ?? null, domain: now.parameters.RootDomain || null, features, phase: state.phase,
-    upgradeAvailable: upgrade, message: upgrade ? `This folder has version ${info.repoVersion}; the account runs ${info.installedVersion}. Run \`node setup.mjs upgrade\`.` : 'Up to date with this folder.' };
+    upgradeAvailable: upgrade, latestVersion: latest?.version ?? null, newerRelease: Boolean(newer), upgradeCommand: newer ? latest.command : null,
+    message: newer ? `Version ${latest.version} is out (this is ${info.repoVersion}). To update: ${latest.command}` : upgrade ? (info.installedVersion ? `This copy is version ${info.repoVersion}; the account runs ${info.installedVersion}. Run \`${cli(ctx)} upgrade\`.` : `Installed from another copy. To compare with this version (${info.repoVersion}) run \`${cli(ctx)} plan\`; nothing changes until you apply.`) : 'Up to date with this folder.' };
 }
 
 // ---------- plan, apply ----------
@@ -263,7 +300,7 @@ export const planId = (changeSetId, items) => createHash('sha256').update(JSON.s
 /** Describe what a deploy would change, in plain words, without changing anything. `change` edits the stored configuration (for example turning a feature on). */
 export async function plan(ctx, change = {}) {
   const state = adoptState(ctx);
-  if (!state) throw new InstallError('Nothing is installed from this folder yet.', 'Run `node setup.mjs install` first.');
+  if (!state) throw new InstallError('Nothing is installed from this folder yet.', `Run \`${cli(ctx)} install\` first.`);
   if (state.phase !== 'ready') throw new InstallError(`The install is not finished (step: ${state.phase}).`, 'Finish the install first.');
   const config = normalise({ ...state, ...change, features: change.features ?? state.features, stack: state.stack, profile: ctx.profile || state.profile });
   const found = preflight({ ...ctx, stack: config.stack });
