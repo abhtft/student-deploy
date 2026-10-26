@@ -63,6 +63,8 @@ for path in checked:
     if os.path.isfile(path):
         found = EMAIL.search(open(path, encoding="utf8", errors="ignore").read())
         assert not found, f"an email address appears in {os.path.relpath(path, root)}; keep addresses out of the repo"
-assert "/student-deploy/alert-email" in open(os.path.join(root, "samconfig.toml"), encoding="utf8").read(), "samconfig names the SSM parameter only"
+_sam = open(os.path.join(root, "samconfig.toml"), encoding="utf8").read()
+if re.search(r"^parameter_overrides", _sam, re.M):  # a teacher's own samconfig; the public repository ships a template with no overrides
+    assert "/student-deploy/alert-email" in _sam, "samconfig names the SSM parameter only"
 
 print("test_template_ops.py: all passed")
