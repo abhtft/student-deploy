@@ -13,7 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { deflateRawSync } from 'node:zlib';
 
 // Teacher: set this once to the DeployApiUrl stack output before sharing the file.
-const API_URL = process.env.DEPLOY_API_URL || 'https://aiuvuzpm88.execute-api.us-east-1.amazonaws.com';
+const API_URL = process.env.DEPLOY_API_URL || 'https://<api-id>.execute-api.us-east-1.amazonaws.com';
 
 const args = process.argv.slice(2);
 const flag = (name) => args.includes(name);

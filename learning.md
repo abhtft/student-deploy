@@ -1,5 +1,7 @@
 # Learnings: student hosting portal and custom domains
 
+> **Historical record.** This document describes the design plan as it was when it was written. For current behaviour, limits and configuration see [docs/TECHNICAL_SPECIFICATION.md](docs/TECHNICAL_SPECIFICATION.md), the source of truth. Statements about "a limit of 10" concurrent Lambda executions describe the situation then: the limit is now 1,000 (granted 2026-10-22).
+
 A record of what this project taught us, written so someone new (or you in six months) can understand not only *what* was built but *why*, what went wrong, and what to do differently. Everything here comes from the real work on `student-deploy`; nothing is theoretical. It contains no passwords or tokens.
 
 Contents
@@ -20,14 +22,14 @@ Contents
 
 ## 1. What was built
 
-Starting point: a CLI-only system. A teacher ran `admin.mjs` to hand out permanent deploy keys; a student ran `node deploy.mjs`, which uploaded a zip through a small API into a private S3 bucket served by CloudFront at `name.margdarshakss.com`.
+Starting point: a CLI-only system. A teacher ran `admin.mjs` to hand out permanent deploy keys; a student ran `node deploy.mjs`, which uploaded a zip through a small API into a private S3 bucket served by CloudFront at `name.example.edu`.
 
 What it became, in four layers added one after another:
 
 | Layer | What it adds |
 |---|---|
 | **Token backend** | Expiring tokens in DynamoDB, a teacher login, a student login (the token *is* the login), a regeneration request flow (request, approve with a new duration, deny), and a daily sweeper that takes expired sites offline |
-| **Web portal** at `deploy.margdarshakss.com` | A teacher page (generate, extend, revoke, take offline, approve requests) and a student page (expiry bar, folder or zip upload with a pre-flight checklist) |
+| **Web portal** at `deploy.example.edu` | A teacher page (generate, extend, revoke, take offline, approve requests) and a student page (expiry bar, folder or zip upload with a pre-flight checklist) |
 | **Hosting** | A second CloudFront distribution for the portal, clean URLs, security headers, an `/api/*` route to the same Lambda |
 | **Custom domains** | A per-student teacher switch; students bring their own subdomain, add one CNAME, and get automatic HTTPS (CloudFront multi-tenant "distribution tenants") |
 
@@ -38,13 +40,13 @@ The old CLI keys still work in parallel; nothing was broken to add the portal.
 ## 2. Architecture and why it looks this way
 
 ```
-Browser ── deploy.margdarshakss.com ── CloudFront (PortalDistribution)
+Browser ── deploy.example.edu ── CloudFront (PortalDistribution)
               ├─ /*      → S3  portal/            static pages (web/)
               └─ /api/*  → API Gateway → Lambda ──┬─ DynamoDB  tokens, slug locks, domain locks, login failures
                                                   ├─ S3        uploads/, sites/<slug>/, archive/<slug>/
                                                   └─ CloudFront  cache invalidation, tenant API
 
-name.margdarshakss.com ── CloudFront (Distribution) → S3 sites/<name>/        (router function picks the folder)
+name.example.edu ── CloudFront (Distribution) → S3 sites/<name>/        (router function picks the folder)
 www.theirdomain.com    ── CloudFront multi-tenant → S3 sites/<student>/       (tenant parameter picks the folder)
 
 Daily 03:00 UTC: Sweeper Lambda → archive expired sites, finish stuck domain removals
@@ -83,7 +85,7 @@ Slugs are unique via a lock item (`slug#<name>`) written with a conditional put,
 ### Custom domains: three options were weighed
 | Option | Verdict |
 |---|---|
-| Student's registrar forwards to `name.margdarshakss.com` | Zero work, but the address bar shows our name. Kept as the fallback to mention to students |
+| Student's registrar forwards to `name.example.edu` | Zero work, but the address bar shows our name. Kept as the fallback to mention to students |
 | One CloudFront distribution per domain, created at runtime | Rejected: wide IAM permissions, slow, leftover resources outside CloudFormation, hard to test |
 | **CloudFront multi-tenant (distribution tenants)** | Chosen: one shared distribution, one tenant per domain, certificate issued and managed by CloudFront over HTTP, no per-domain distributions to clean up |
 
@@ -100,7 +102,7 @@ Nothing: an existing domain keeps working; only *new* setup is blocked. This avo
 ## 4. AWS and CloudFront lessons
 
 ### 4.1 A wildcard DNS record blocks a more specific CloudFront alias
-The first production deploy **failed and rolled back**: CloudFront refused to attach `deploy.margdarshakss.com` to the new portal distribution because the existing `*.margdarshakss.com` CNAME already made that name resolve to the *student* distribution. CloudFront refuses an alias whose DNS points at a different distribution.
+The first production deploy **failed and rolled back**: CloudFront refused to attach `deploy.example.edu` to the new portal distribution because the existing `*.example.edu` CNAME already made that name resolve to the *student* distribution. CloudFront refuses an alias whose DNS points at a different distribution.
 
 Fix: a **two-phase rollout**.
 1. Deploy the portal distribution *without* the alias (`PortalAlias=false`).
@@ -110,7 +112,7 @@ Fix: a **two-phase rollout**.
 Takeaway: when you add a name that falls under an existing wildcard, plan the DNS record *before* the alias, and make the alias a switchable parameter so the stack can be created first.
 
 ### 4.2 Browsers need CORS to PUT directly to S3
-The student page uploads the zip straight to a presigned S3 URL. S3 must allow the page's **origin**. The bucket rule allows only `https://deploy.margdarshakss.com`, so uploads from the plain `cloudfront.net` address failed ("The upload failed. Check your connection…") even though everything before that step worked. Diagnosis was a one-line preflight check:
+The student page uploads the zip straight to a presigned S3 URL. S3 must allow the page's **origin**. The bucket rule allows only `https://deploy.example.edu`, so uploads from the plain `cloudfront.net` address failed ("The upload failed. Check your connection…") even though everything before that step worked. Diagnosis was a one-line preflight check:
 
 ```
 curl -X OPTIONS <bucket-url> -H "Origin: <page origin>" -H "Access-Control-Request-Method: PUT"
@@ -344,3 +346,64 @@ active ──(expires_at)──▶ expired (read-only, 3 days) ──▶ offline
 8. Test invariants, not just happy paths: the offline bypass hid behind green tests.
 9. Review every changeset row, and deploy only from the right folder.
 10. Anchor scripted edits on unique text, and keep risky text out of shell heredocs.
+
+
+---
+
+## 13. Student backends (local build, 2026-10-20)
+
+What the work taught us, written before the first live run. Items marked *to verify live* are assumptions that only AWS can confirm.
+
+**Design**
+- **Check the account before designing the safety net.** One read-only call (`aws lambda get-account-settings`) showed the Lambda limit is **10 concurrent executions**, shared with other production apps. That killed the textbook defence (reserved concurrency per student) and forced a different one: an in-flight limiter in the gateway. Always read the real quotas first.
+- **A gateway beats per-student routes.** One catch-all route plus one gateway Lambda gives unlimited students and a single place for status checks, limits, counting, error mapping and the kill switch. The cost is one extra hop and two Lambda slots per request, which the limiter accounts for (3 requests in flight means at most 6 slots).
+- **Make the cost control the teacher's, and exact.** A teacher-set run allowance is a much tighter ceiling than any concurrency bound (about $0.17 per student per month at the default, versus about $17), and it is simple to explain: "5,000 runs a month".
+- **One toggle that means stop.** A backend executes code, so OFF must stop serving (unlike a custom domain, which keeps working when its switch is turned off). The toggle replaced a separate kill switch.
+- **Order of checks matters.** Cheap rejections first (secret, path, size, lifecycle, toggle, per-IP, in-flight cap), the atomic run counter last, and the slot released in a `finally`. Only a run that reaches the function is counted; a request rejected earlier never costs the student anything.
+
+**Counters**
+- **One conditional atomic update gives "no overshoot".** `ADD count 1` with the condition `attribute_not_exists(count) OR count <= limit - 1` can never exceed the limit, even with parallel callers (a 60-thread test proves it). Do not read-then-write.
+- **Limit 0 needs its own case.** With `attribute_not_exists` in the condition, a limit of 0 would let the first call through. Handle `limit <= 0` before the update.
+- **Counters leak.** A crash between increment and decrement leaves an in-flight count stuck above zero. Store `updated_at` and let the next request reset a counter that is above zero but untouched for longer than the longest possible request.
+- **Never treat a negative age as fresh.** A cache check written as `now - loaded < ttl` accepts entries from the future; use `0 <= age < ttl`.
+
+**Security**
+- **Failure details are secrets too.** A student's exception message can contain their own secrets. The visitor gets a generic error, and the platform's own logs do not record the message either (the student can read it in their function's logs).
+- **Env values are write-only.** Stored only in the function's configuration, never in DynamoDB, never returned by any API. The test asserts the value appears nowhere in any response.
+- **Scope IAM by name and guard it with a test.** The Deploy Lambda may manage only `function:sd-*`, may pass only the sandbox role and only to Lambda, and may never create roles. `tests/test_template_backend.py` asserts this against the template text, and mutation testing (widening each rule on purpose) confirmed the test catches it.
+
+**Testing**
+- **Run the student's real code in the fake.** `FakeLambda` executes uploaded Python and Node handlers, so the contract (event in, response out) is tested for real, including env vars and captured logs. The starter templates are deployed through the real gateway in the tests, so they cannot drift from the contract.
+- **A weak assertion is worse than none.** I wrote a few `... or True` lines while moving fast; they tested nothing and would have kept passing forever. Review for them before committing.
+- **Polling needs a re-schedule path.** The same bug appeared twice (custom domains, then backends): when a poll returns an unchanged state, the card is not rebuilt, so nothing schedules the next poll. The poller itself must re-arm when state is unchanged and the card did not rebuild.
+
+**Tooling trap**
+- **An unfocused browser pane never fires `<dialog>` close events.** Even a bare native dialog failed (`document.hasFocus()` was false), which looked like a bug in the app for half an hour. Diagnosis in three steps: bisect the fields, test a minimal native dialog, check focus. After fronting the tab everything worked. When a UI test "fails" in an embedded browser, test the simplest possible case before debugging your code.
+
+**What the first live run found (2026-10-21)** — everything the fakes could not know. 48 live checks now pass.
+- **Presigned URLs from a default boto3 S3 client are SigV2 in us-east-1.** S3 then rejects the upload with `SignatureDoesNotMatch` the moment a Content-Type header is added (every browser does). The site uploader already configured SigV4 + virtual addressing; the new backend code copied the call but not the client configuration. Fakes cannot show this. Fix: configure the client, and test the *real* client's settings offline (the test now fails if the fix is removed).
+- **`cfn-lint` does not catch every circular dependency.** CloudFormation refused the changeset: `Distribution -> BackendApi -> GatewayFunction -> Distribution`, closed by the shared `Globals` environment (every function referenced the distribution). Creating a changeset costs nothing and found it; lint did not. Fix: override those two variables for the one function that does not need them, plus a template test.
+- **Cache negatives for much less than positives.** A 10 s cache made a freshly deployed backend look missing for 10 s. Now 2 s for sites without a ready backend, 10 s for ready ones.
+- **AWS facts confirmed:** reserved concurrency 0 is accepted at an account limit of 10 (so the OFF belt-and-braces works); a new Python/Node function becomes Active in about 3 to 4 seconds; 8 parallel requests against a 3-request cap gave exactly 3 successes and 5 `busy`, and the slots were free again afterwards.
+- **A live test with a throwaway fixture is cheap and thorough.** The student, function, log group and counters were created by script and removed in a `finally`; a final scan proved nothing was left behind. Run the whole thing again after every fix: the Node failure only appeared after the first fixes unblocked the later steps.
+
+**A student's first real use found a gap the tests could not (2026-10-21).** A student opened their *custom domain* and every Analyze/Submit got `403`. Lessons:
+- **Every distribution that can serve a site needs every route.** The `/api/*` route was added to the distribution behind `<slug>.example.edu` but not to the separate multi-tenant distribution behind custom domains. It was on the plan as "Phase 2, pending", and the pending item became a user-visible failure within a day. When a feature has a "later" for one surface, say so loudly where users will meet it, or finish it first.
+- **Who answered is the diagnosis.** The platform's gateway always answers in JSON. An **HTML** 403 with `X-Cache: Error from cloudfront` means CloudFront itself refused the request (here: POST on a GET/HEAD-only behavior) and the backend was never reached. Reading the response headers in DevTools took one look; start there.
+- **Reproduce before fixing.** Three read-only calls confirmed it: the custom domain failed, the same student's normal address worked, and the distribution config showed one origin and no `/api/*` behavior.
+- **Multi-tenant distributions are stricter.** `update-distribution` rejected `SmoothStreaming` (not allowed on multi-tenant) and wanted `FieldLevelEncryptionId`; the fix was found one error at a time, with nothing changed by the failed calls.
+- **Dry run by default, apply on request.** The change script prints the planned change and only acts with `--apply`, saves the current configuration first, never prints or stores the secret, and is idempotent. The safety check that blocked an inline "patch and apply" in one command was right: splitting the edit from the apply, showing the plan, and asking made the production change reviewable.
+- **Guard the documented config.** `tests/test_tenant_config.py` asserts the `/api/*` behavior, POST allowed, caching disabled, and no real secret (mutation-tested). Config that lives outside CloudFormation needs tests even more, because nothing else will notice drift.
+
+## 14. Class AI connector (2026-10-22)
+
+- **Measure the model before you design around it.** The free Gemma model answered HTTP 429 (rate-limited upstream, a pool shared with everyone on OpenRouter) in 3 of 3 calls, so the free tier cannot back a class. The paid Haiku 5.5 answered in 1.3 to 2.1 s at under $0.0001 per short answer. A $0 model also cannot be limited by a dollar cap, which is what per-student keys use.
+- **Per-student keys beat a proxy here.** A proxy holding one key would need our own metering and costs three concurrent Lambdas per AI call at an account limit of 10 (gateway, student function, proxy). Capped sub-keys need no extra Lambda and the provider enforces the cap. The price: the cap is in dollars and the provider's usage counting lags by seconds, so a cap can be overshot slightly (7 small calls passed a cap worth about 3 in the live spike).
+- **Spike the provider API before building.** A 10-minute spike with a $0.00002 key showed what the docs did not: `expires_at` cannot be patched (so we never set it and disable keys instead), a normal key gets "Only management keys can perform this operation", a capped key answers 403 "Key limit exceeded", a disabled key answers 401, and responses may start with whitespace (parse with `strip()`).
+- **Never hand a student the platform's key.** Their code can read its own environment. Give each student their own capped, revocable key, and disable it first when AI goes off.
+- **DynamoDB has no floats.** Store money as whole micro-dollars. The in-memory test store accepts floats, so the AI tests use a strict store that fails on any float, which is how this class of bug is caught before production.
+- **Order operations so the safe one cannot be skipped.** Switch-off disables the key before touching the function; switch-on stores the new key before updating the function, so a failure in between is retried with the same key and never creates a second one.
+- **Provider outages must not block the teacher.** Revoke and extend call a best-effort sync; a failure is logged and the daily sweeper retries.
+- **Scope the secret.** The management key lives in Secrets Manager, readable only by the Deploy and Sweeper functions through one named-secret statement that a test pins (and a test fails if any `sk-or-v1-` key is committed).
+- **A long wait needs the whole chain to agree.** AI answers take seconds, so the student function timeout (25 s) must stay below the gateway's (29 s), which must stay below the HTTP API's limit (30 s). A template test pins all three.
+- **Quote what you saw.** The usage the portal reads from OpenRouter took up to about 25 s to show a first non-zero number in the live run, so the pages say "up to half a minute behind" instead of promising real time.

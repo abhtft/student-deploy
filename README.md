@@ -1,5 +1,17 @@
 # Student frontend hosting (teacher setup)
 
+## Get your own copy running (teachers)
+
+You need an AWS account, Node 20+ and the AWS CLI signed in (`aws configure`). Then one command, no download and no git:
+
+```bash
+npx -y https://github.com/<owner>/<repo>/releases/latest/download/class-platform-teacher.tgz install
+```
+
+It asks for your AWS profile, an optional domain, which features you want and your teacher login, then installs everything into **your** account (10 to 15 minutes). Later, each new release is one command (the release page shows it): `npx -y https://github.com/<owner>/<repo>/releases/download/v<new>/class-platform-teacher-<new>.tgz upgrade`. Step by step: [docs/TEACHER_SETUP.md](docs/TEACHER_SETUP.md).
+
+---
+
 Every student publishes their built frontend (`dist/`) to **your** AWS account with one command:
 
 ```bash
@@ -22,9 +34,29 @@ Browser ──▶ CloudFront ──(router function)──▶ S3 sites/<student>
 | `admin.mjs` | Add, remove and list students |
 | `student/deploy.mjs` | The file you hand to students |
 | `student/deploy.yml` | Optional GitHub Action for students (auto-deploy on push) |
+| `student/portal-deploy.mjs`, `portal-deploy.yml`, `CICD.md` | Token-based deploy of `frontend/` and `backend/` from a laptop or GitHub Actions (guide for students: `student/CICD.md`) |
 | `student/README.md` | Student instructions |
 
-## Web portal (deploy.margdarshakss.com)
+## Documentation map
+
+| Read this | For |
+|---|---|
+| **[docs/TECHNICAL_SPECIFICATION.md](docs/TECHNICAL_SPECIFICATION.md)** | **The source of truth for Release 1.0 (MVP):** scope, architecture, data model, state machines, every feature with its flow and rules, limits, configuration, security, release procedure, decisions, open items and a requirements-to-tests traceability matrix. Its numbers are checked against the code by a test. If another document disagrees, this one wins |
+| **[docs/STUDENT_KIT.md](docs/STUDENT_KIT.md)** | **Student kit:** a starter project for AI editors (rules, checker, local dev, auto-deploy): the journey from a token to a deployed app, how the architecture is enforced, security, publishing, tests |
+| **[docs/AWS_LEARNINGS.md](docs/AWS_LEARNINGS.md)** | **A learning guide to the AWS ideas in this project:** CloudFront, S3 and presigned uploads, CORS, IAM and least privilege, Lambda limits, API Gateway, DynamoDB design, CloudFormation change sets, secrets, security mindset, cost, testing against the real account, a log of real mistakes and exercises |
+| **[docs/TEACHER_SETUP.md](docs/TEACHER_SETUP.md)** | **Install and update your own copy:** `npx -y class-platform-teacher install` (own AWS account, optional domain, no clone), `upgrade`, feature switches, the teacher MCP, cost and removal; versions in [CHANGELOG.md](CHANGELOG.md) |
+| **[docs/MCP.md](docs/MCP.md)** | **How MCP is used here:** the `class-platform-mcp` package, its five tools, one-command editor setup, token handling, distribution from the portal, updates, security model, tests and troubleshooting |
+| **[docs/STORAGE_CONNECTOR.md](docs/STORAGE_CONNECTOR.md)** | **Class storage connector (live, off per student until the teacher switches it on):** a capped per-student database and file area for backends, how isolation and cost are controlled, how to switch it on |
+| **[docs/AI_CONNECTOR.md](docs/AI_CONNECTOR.md)** | **Class AI connector:** workflow diagrams (setup, teacher on/off, a student's AI call, key lifecycle), where each secret lives, threat model, IAM matrix, operations and emergencies |
+| **[docs/NEW_ACCOUNT_AND_TRANSFER.md](docs/NEW_ACCOUNT_AND_TRANSFER.md)** | **New AWS account and project transfer:** two accounts with CLI profiles, what a new account needs (credits, CloudFront verification), the install without the SAM CLI (verified), and the designed installer and export/import between accounts (not built yet) |
+| **[docs/END_TO_END.md](docs/END_TO_END.md)** | **The complete workflow:** architecture, how requests travel, teacher and student workflows, setup, operations, verification, security, troubleshooting, limits |
+| [docs/API_REFERENCE.md](docs/API_REFERENCE.md) | Every HTTP route, request, response and error code |
+| [implement.md](implement.md) | Step-by-step setup and verification (Parts 1 to 4) |
+| [student/BACKEND.md](student/BACKEND.md) | Student guide to writing a backend |
+| [backend_wire.md](backend_wire.md) | Design reasoning for student backends |
+| [learning.md](learning.md) | Lessons learned, mistakes and fixes |
+
+## Web portal (deploy.example.edu)
 
 Besides the CLI, there is a web portal with two sections, each with its own login:
 
@@ -34,7 +66,7 @@ Besides the CLI, there is a web portal with two sections, each with its own logi
 Token life: active until expiry, then 3 days read-only (the site stays online and the student can request regeneration), then the site goes **offline** (moved to `archive/`, never deleted). Approving a request or extending the token restores it.
 
 ```
-deploy.margdarshakss.com ─ CloudFront ─┬─ /*     → S3 portal/ (the pages in web/)
+deploy.example.edu ─ CloudFront ─┬─ /*     → S3 portal/ (the pages in web/)
                                        └─ /api/* → API Gateway → Lambda → DynamoDB
 Daily: sweeper Lambda archives sites past expiry + grace
 ```
@@ -51,9 +83,17 @@ Setup: `sam deploy`, then `node admin.mjs teacher-setup <name>`, `node admin.mjs
 
 The teacher can switch a custom domain on per student (the **Domain: off / on** button). The student then enters a subdomain such as `www.theirname.com`, adds one CNAME at their DNS host, and HTTPS is set up automatically. Built on CloudFront multi-tenant distributions; the AWS pieces created by hand and the operating notes are in [implement.md](implement.md), Part 3.
 
+## Student backends (pilot)
+
+The teacher can let a student host a small function (Node 22 or Python 3.12) that their site calls at `/api/...` (no CORS to configure). Per student the teacher has a **Backend on/off** toggle and a **run allowance** (a number of runs per day, month or in total). Student code runs in a log-only sandbox behind a gateway with an in-flight limiter that protects the rest of the AWS account. Deployed (`BackendEnabled="true"` in `samconfig.toml`; the template default is `false`). Plan: [backend_wire.md](backend_wire.md). Setup and operations: [implement.md](implement.md) Part 4. Students: [student/BACKEND.md](student/BACKEND.md) and the starter templates in `student/backend-template/`.
+
+**Class storage (optional, off per student by default; deployed with `StorageEnabled`):** the teacher can give a student's backend a small database and file area with hard caps; the student uses the `class_storage` helper (the kit's sample backend has a `/notes` route). Code: `lambda/storage.py`, `lambda/storage_api.py`. Details: [docs/STORAGE_CONNECTOR.md](docs/STORAGE_CONNECTOR.md).
+
+**Class AI (optional, off by default):** the teacher can switch on an AI key for a student's backend: a capped, revocable OpenRouter key per student (`OPENAI_API_KEY`, `OPENAI_BASE_URL`, `AI_MODEL` appear in the function), with a dollar cap the teacher edits and a usage meter. The platform's own management key stays in Secrets Manager. Code: `lambda/ai.py`, `lambda/openrouter.py`. Workflows and security: [docs/AI_CONNECTOR.md](docs/AI_CONNECTOR.md); setup: [docs/END_TO_END.md](docs/END_TO_END.md) sections 3.3a and 4.5c; students: [student/BACKEND.md](student/BACKEND.md).
+
 ## One-time setup (about 20 min)
 
-Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 18+.
+Prerequisites: AWS CLI (logged in), [SAM CLI](https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/install-sam-cli.html), Node 22+.
 
 ### 1. Pick the URL style
 

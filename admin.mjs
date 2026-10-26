@@ -10,7 +10,8 @@
 // STACK_NAME (default "student-hosting") selects the deployed stack.
 import { execFileSync } from 'node:child_process';
 import { randomBytes, scryptSync } from 'node:crypto';
-import { readdirSync, statSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -71,17 +72,33 @@ if (command === 'add') {
   for (const name of Object.keys(keys).sort()) console.log(`${name.padEnd(20)} ${siteUrl(name)}`);
   console.log(`\n${Object.keys(keys).length} students, parameter uses ${JSON.stringify(keys).length}/4096 bytes`);
 } else if (command === 'portal-publish') {
-  const web = join(dirname(fileURLToPath(import.meta.url)), 'web');
-  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json' };
-  const files = readdirSync(web).filter((f) => statSync(join(web, f)).isFile());
-  for (const file of files) {
+  const root = dirname(fileURLToPath(import.meta.url));
+  const web = join(root, 'web');
+  const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.yml': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.json': 'application/json', '.zip': 'application/zip', '.tgz': 'application/gzip' };
+  // Pages from web/, plus the student downloads (portal-downloads.json maps published name -> source file, so each has one source of truth).
+  const downloads = JSON.parse(readFileSync(join(root, 'portal-downloads.json'), 'utf8'));
+  const uploads = [
+    ...readdirSync(web).filter((f) => statSync(join(web, f)).isFile()).map((f) => [f, join(web, f)]),
+    ...Object.entries(downloads).map(([name, source]) => [name, join(root, source)]),
+  ];
+  // The student kit (zip + version file) and the MCP package (one tarball per version, the newest alias, mcp-version.json), all built fresh from
+  // starter/ by the same code the local dev portal uses.
+  const { buildPublishFiles } = await import('./starter/publish-files.mjs');
+  const kitTemp = mkdtempSync(join(tmpdir(), 'kit-publish-'));
+  const built = buildPublishFiles(kitTemp, outputs.PortalUrl);
+  for (const name of built.files) uploads.push([name, join(kitTemp, name)]);
+  const kit = { version: built.kitVersion };
+  const files = uploads.map(([name]) => name);
+  for (const [file, path] of uploads) {
     // Explicit content types: the AWS CLI guesses from the Windows registry, which can label .js as text/plain.
-    aws('s3', 'cp', join(web, file), `s3://${outputs.BucketName}/portal/${file}`, '--content-type', TYPES[extname(file)] ?? 'application/octet-stream', '--cache-control', 'no-cache');
+    aws('s3', 'cp', path, `s3://${outputs.BucketName}/portal/${file}`, '--content-type', TYPES[extname(file)] ?? 'application/octet-stream', '--cache-control', 'no-cache');
   }
   const listed = JSON.parse(aws('s3api', 'list-objects-v2', '--bucket', outputs.BucketName, '--prefix', 'portal/', '--query', 'Contents[].Key') || 'null') ?? [];
-  for (const key of listed.filter((k) => !files.includes(k.slice('portal/'.length)))) aws('s3', 'rm', `s3://${outputs.BucketName}/${key}`);
+  // every older class-platform-mcp-<version>.tgz stays: editors' settings point at the exact version they were set up with
+  for (const key of listed.filter((k) => !files.includes(k.slice('portal/'.length)) && !/^portal\/class-platform-mcp-[\w.-]+\.tgz$/.test(k))) aws('s3', 'rm', `s3://${outputs.BucketName}/${key}`);
   aws('cloudfront', 'create-invalidation', '--distribution-id', outputs.PortalDistributionId, '--paths', '/*');
-  console.log(`Published ${files.length} files. Portal: ${outputs.PortalUrl}`);
+  rmSync(kitTemp, { recursive: true, force: true });
+  console.log(`Published ${files.length} files (including the student kit ${kit.version} and class-platform-mcp ${built.mcpVersion}). Portal: ${outputs.PortalUrl}`);
 } else if (command === 'teacher-setup') {
   const username = names[0];
   if (!username || !/^[a-zA-Z0-9._-]{3,40}$/.test(username)) {

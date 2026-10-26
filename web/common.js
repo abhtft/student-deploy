@@ -13,6 +13,14 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+/** Dollars for small AI amounts: $0.25, $0.0123, $12.50 (never rounds a tiny amount to $0.00). */
+export function usd(n) {
+  const value = Number(n) || 0;
+  if (value === 0) return '$0.00';
+  const text = value >= 1 ? value.toFixed(2) : value.toFixed(4).replace(/0+$/, '').replace(/(\.\d)$/, '$10');
+  return `$${text === '0.' || text === '0.0' ? '0.0001' : text}`;
+}
+
 /** Replace an element's children, skipping null/false so conditional children don't render as text. */
 export const fill = (el, ...kids) => el.replaceChildren(...kids.flat().filter((k) => k != null && k !== false));
 
@@ -114,12 +122,16 @@ export async function copyText(text) {
 
 export function toast(message) {
   const el = h('div', { class: 'toast', role: 'status' }, message);
-  document.body.append(el);
+  // inside the open dialog (if any): a dialog is shown above everything else on the page, so a toast outside it would be hidden
+  const host = [...document.querySelectorAll('dialog[open]')].pop() || document.body;
+  host.append(el);
   setTimeout(() => el.remove(), 2500);
 }
 
 /**
  * Modal prompt. fields: [{name, label, type, value, min, max, options, required, placeholder}].
+ * A text field may follow a select: `follows: {field, by: {<select value>: {value, suggestions}}}` fills in that choice's default (while the box still
+ * holds the default of the previous choice) and offers its suggestions as a list, so the box stays writable.
  * Resolves to {name: value} on confirm, or null on cancel. With no fields it is a plain confirm.
  */
 export function ask({ title, text, fields = [], confirm = 'OK', danger = false }) {
@@ -127,9 +139,25 @@ export function ask({ title, text, fields = [], confirm = 'OK', danger = false }
     const inputs = fields.map((f) => {
       const control = f.options
         ? h('select', { name: f.name }, f.options.map(([value, label]) => h('option', { value, selected: String(value) === String(f.value) }, label)))
-        : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, required: f.required, placeholder: f.placeholder, maxlength: f.maxlength });
+        : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, step: f.step, required: f.required, placeholder: f.placeholder, maxlength: f.maxlength });
       return h('label', {}, f.label, control);
     });
+    const follow = (f) => {
+      const source = () => dialog.querySelector(`[name="${f.follows.field}"]`);
+      const box = () => dialog.querySelector(`[name="${f.name}"]`);
+      const list = h('datalist', { id: `list-${f.name}` });
+      const apply = (previous) => {
+        const now = f.follows.by[source().value] || { value: '', suggestions: [] };
+        const before = f.follows.by[previous];
+        if (!box().value || (before && box().value === before.value)) box().value = now.value;
+        list.replaceChildren(...now.suggestions.map((v) => h('option', { value: v })));
+      };
+      box().setAttribute('list', list.id);
+      box().after(list);
+      let last = source().value;
+      source().addEventListener('change', () => { apply(last); last = source().value; });
+      apply(last);
+    };
     const submit = h('button', { class: danger ? 'danger' : 'primary', type: 'submit' }, confirm);
     const dialog = h('dialog', {}, h('form', { method: 'dialog' },
       h('h2', {}, title), text && h('p', { class: 'muted', style: 'margin:0' }, text), inputs,
@@ -140,6 +168,7 @@ export function ask({ title, text, fields = [], confirm = 'OK', danger = false }
     });
     dialog.addEventListener('close', () => { dialog.remove(); resolve(result); });
     document.body.append(dialog);
+    fields.filter((f) => f.follows).forEach(follow);
     dialog.showModal();
   });
 }
