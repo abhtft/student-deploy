@@ -6,3 +6,6 @@ __pycache__/
 
 # local secrets
 *.local
+
+# installer state (account, stack, last plan)
+.class-platform/

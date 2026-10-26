@@ -83,6 +83,13 @@ await step('class AI with Gemini: provider switch, private-key proxy, forced mod
   }
 });
 
+await step('teacher installer and updater (fake AWS CLI): try and domain install, plan/apply bound to the shown plan, feature switches; teacher MCP', () => {
+  for (const test of ['test_installer.mjs', 'test_teacher_mcp.mjs']) {
+    const r = spawnSync('node', [join(here, test)], { encoding: 'utf8' });
+    assert.equal(r.status, 0, `${test}: ${r.stderr || r.stdout}`);
+  }
+});
+
 await step('web: folder checks and zip builder (zip validated by the Lambda code)', () => {
   const r = spawnSync('node', [join(here, 'test_web.mjs')], { encoding: 'utf8' });
   assert.equal(r.status, 0, r.stderr || r.stdout);

@@ -1,6 +1,6 @@
 # Class Hosting Platform: Technical Specification (Release 1.0, MVP)
 
-> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md), [MCP.md](MCP.md), [AWS_LEARNINGS.md](AWS_LEARNINGS.md) (a learning guide, not an operating document), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.py` on every test run.
+> **This is the main technical source of truth for Release 1.0.** If another document, a comment or a message disagrees with it, this document wins and the other one is wrong and must be fixed. The companion documents ([END_TO_END.md](END_TO_END.md), [API_REFERENCE.md](API_REFERENCE.md), [AI_CONNECTOR.md](AI_CONNECTOR.md), [STUDENT_KIT.md](STUDENT_KIT.md), [STORAGE_CONNECTOR.md](STORAGE_CONNECTOR.md), [MCP.md](MCP.md), [TEACHER_SETUP.md](TEACHER_SETUP.md), [AWS_LEARNINGS.md](AWS_LEARNINGS.md) (a learning guide, not an operating document), [../implement.md](../implement.md), [../learning.md](../learning.md)) go deeper on one area each. Numbers in section 14 are **machine-checked** against the code by `tests/test_spec.py` on every test run.
 
 ## 0. Document control
 
@@ -1107,7 +1107,7 @@ Presigned URLs need a SigV4 client; cfn-lint misses circular dependencies (the c
   "reservedSlugs": ["sites", "uploads", "archive", "deploy", "www", "api", "admin", "mail", "ftp", "app", "apps", "static", "assets", "bs", "lenden"],
   "kitVersion": "1.6.0",
   "mcpPackage": { "version": "1.0.0" },
-  "testSteps": 37,
+  "testSteps": 38,
   "alarms": ["lambda-concurrency-near-limit", "lambda-throttles", "portal-function-errors", "sweeper-errors", "backend-gateway-errors", "backend-5xx", "storage-errors"]
 }
 ```

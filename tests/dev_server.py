@@ -19,7 +19,7 @@ os.environ.update(AWS_REGION="us-east-1", AWS_DEFAULT_REGION="us-east-1", AWS_AC
                   BUCKET="b", DISTRIBUTION_ID="E1", DISTRIBUTION_DOMAIN="d123.cloudfront.net", ROOT_DOMAIN="example.edu",
                   KEYS_PARAM="/k", TENANT_DISTRIBUTION_ID="EMT", ROUTING_ENDPOINT="route.cloudfront.net",
                   BACKEND_ENABLED="true", SANDBOX_ROLE_ARN="arn:aws:iam::1:role/sandbox", ORIGIN_SECRET="dev-origin-secret", GATEWAY_CACHE_SECONDS="0",
-                  AI_ENABLED="true", AI_GEMINI_ENABLED="true", AI_PROXY_URL="http://127.0.0.1:8777", AI_SECRET_NAME="openrouter", AI_DEFAULT_MODEL="anthropic/claude-haiku-5.5", AI_DEFAULT_LIMIT_USD="0.25",
+                  AI_ENABLED="true", AI_SECRET_NAME="openrouter", AI_DEFAULT_MODEL="anthropic/claude-haiku-5.5", AI_DEFAULT_LIMIT_USD="0.25",
                   STORAGE_ENABLED="true", STORAGE_URL=f"http://127.0.0.1:{port}/storage")
 sys.path[:0] = [os.path.join(here, "..", "lambda"), here]
 import app  # noqa: E402

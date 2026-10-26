@@ -79,3 +79,16 @@ Needs only Node, the AWS CLI (configured) and an AWS account.
 - Stale test servers: a crashed test can leave a `python3.12` dev server listening on 8791 to 8798 and tests then fail with odd "token not accepted" errors; kill leftover `python3.12` processes first.
 - `sam` is not on the Git Bash PATH: use PowerShell. Writing `samconfig.toml` with PowerShell `Set-Content -Encoding utf8` adds a BOM that breaks it; use `[System.IO.File]::WriteAllText` with a UTF-8 encoding without BOM.
 - Calling `process.exit()` right after network use can print a libuv assertion on Node 25 / Windows: set `process.exitCode` instead.
+
+---
+
+## 7. Update: what was built after the plan (2026-10-26)
+
+Move 2 and the update path were built together, in the order the plan asked (engine first, wrappers on top):
+
+- `installer/engine.mjs`: the install/update engine (preflight, artifact bucket, package + deploy without SAM, certificate and two-phase domain install, plan, apply bound to the shown plan id, feature switches, AI secret, destroy). Takes a context (aws runner, prompts), returns plain data.
+- `setup.mjs`: the wizard and commands (`install`, `finish-domain`, `teacher`, `secrets`, `status`, `plan`, `apply`, `upgrade`, `publish`, `check`, `destroy`; `--dry-run`, `--json`).
+- `teacher-mcp/` (`class-platform-teacher-mcp`): thin MCP over `setup.mjs --json`; confirm-gated; installs and applies as background jobs; no delete, password, key or IAM tools.
+- `VERSION`, `CHANGELOG.md`, `docs/TEACHER_SETUP.md`; tests `tests/test_installer.mjs` (fake AWS CLI) and `tests/test_teacher_mcp.mjs`.
+
+Still to do: the first real install in the new account (manual, by the owner), publishing `class-platform-teacher-mcp` to npm, `latest.json`/update banner on the teacher page, the upgrade test in CI (install previous tag, upgrade, smoke), the scrub of remaining identifiers in docs, LICENSE/SECURITY/CONTRIBUTING (Move 3).
