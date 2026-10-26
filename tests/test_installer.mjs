@@ -159,6 +159,18 @@ const fails = async (fn, pattern) => { try { await fn(); } catch (e) { assert.ma
   console.log('  ok  status reads the account, lists the features and notices a newer version in the folder');
 }
 
+// ---------- a fresh clone adopts the stack that already exists ----------
+{
+  reset();
+  const fake = fakeAws({ stack: 'UPDATE_COMPLETE', parameters: { RootDomain: 'apps.example.com', CertificateArn: 'arn:c', AiEnabled: 'true', BackendEnabled: 'true', AiGeminiEnabled: 'false', StorageEnabled: 'false' } });
+  const { ctx } = context(fake);
+  const s = await engine.status(ctx);
+  assert.deepEqual([s.installed, s.domain, s.features], [true, 'apps.example.com', ['backend', 'ai']]);
+  assert.equal(stateOf().adopted, true);
+  assert.equal(engine.adoptState(context(fakeAws()).ctx), null, 'no stack, nothing to adopt');
+  console.log('  ok  a fresh clone adopts the existing stack (domain and features read from the account)');
+}
+
 // ---------- plan and apply ----------
 {
   const safe = [{ Action: 'Modify', LogicalResourceId: 'PortalFunction', ResourceType: 'AWS::Lambda::Function', Replacement: 'False' }, { Action: 'Add', LogicalResourceId: 'AiProxyApi', ResourceType: 'AWS::ApiGatewayV2::Api' }];

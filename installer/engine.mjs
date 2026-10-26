@@ -60,6 +60,20 @@ function writeState(ctx, state) {
   writeFileSync(statePath(ctx), `${JSON.stringify(state, null, 2)}\n`);
 }
 
+/** A fresh clone has no saved state. If the stack exists in the account, rebuild the state from it (parameters tell the domain and features). */
+export function adoptState(ctx) {
+  const known = readState(ctx);
+  if (known) return known;
+  let found;
+  try { found = stackOutputs(ctx); } catch { return null; }
+  if (!found.status || !/COMPLETE$/.test(found.status) || /ROLLBACK|DELETE/.test(found.status)) return null;
+  const p = found.parameters;
+  const features = Object.entries(FEATURES).filter(([, name]) => p[name] === 'true').map(([f]) => f).sort();
+  const state = { stack: ctx.stack, profile: ctx.profile, domain: p.RootDomain || '', certificateArn: p.CertificateArn || '', features, phase: 'ready', installedVersion: null, adopted: true };
+  writeState(ctx, state);
+  return state;
+}
+
 export const repoVersion = (ctx) => { try { return readFileSync(join(ctx.repo, 'VERSION'), 'utf8').trim(); } catch { return '0.0.0'; } };
 
 /** Check the choices and return them in their final form. Everything a teacher can choose is here. */
@@ -228,13 +242,13 @@ export function teacherLogin(ctx, username, password) {
 
 // ---------- status ----------
 export async function status(ctx) {
-  const state = readState(ctx);
+  const state = adoptState(ctx);
   const info = { ok: true, repoVersion: repoVersion(ctx), installedVersion: state?.installedVersion ?? null, installed: false };
   if (!state) return { ...info, message: 'Nothing is installed from this folder yet. Run `node setup.mjs install`.' };
   const stackName = state.stack ?? ctx.stack;
   const now = stackOutputs({ ...ctx, stack: stackName });
   const features = Object.entries(FEATURES).filter(([, p]) => now.parameters[p] === 'true').map(([f]) => f);
-  const upgrade = info.installedVersion !== info.repoVersion;
+  const upgrade = info.installedVersion !== info.repoVersion; // an adopted install has no recorded version: the next plan will say what differs
   return { ...info, installed: true, stack: stackName, stackStatus: now.status, portalUrl: now.outputs.PortalUrl ?? null, domain: now.parameters.RootDomain || null, features, phase: state.phase,
     upgradeAvailable: upgrade, message: upgrade ? `This folder has version ${info.repoVersion}; the account runs ${info.installedVersion}. Run \`node setup.mjs upgrade\`.` : 'Up to date with this folder.' };
 }
@@ -246,7 +260,7 @@ export const planId = (changeSetId, items) => createHash('sha256').update(JSON.s
 
 /** Describe what a deploy would change, in plain words, without changing anything. `change` edits the stored configuration (for example turning a feature on). */
 export async function plan(ctx, change = {}) {
-  const state = readState(ctx);
+  const state = adoptState(ctx);
   if (!state) throw new InstallError('Nothing is installed from this folder yet.', 'Run `node setup.mjs install` first.');
   if (state.phase !== 'ready') throw new InstallError(`The install is not finished (step: ${state.phase}).`, 'Finish the install first.');
   const config = normalise({ ...state, ...change, features: change.features ?? state.features, stack: state.stack, profile: ctx.profile || state.profile });
@@ -290,7 +304,7 @@ export async function apply(ctx, id) {
 
 /** Feature switch = a plan with that feature turned on or off. */
 export const featurePlan = (ctx, feature, on) => {
-  const state = readState(ctx);
+  const state = readState(ctx) ?? adoptState(ctx);
   if (!FEATURES[feature]) throw new InstallError(`Unknown feature "${feature}".`, `Choose from: ${Object.keys(FEATURES).join(', ')}.`);
   const features = new Set(state?.features ?? []);
   if (on) features.add(feature); else features.delete(feature);
