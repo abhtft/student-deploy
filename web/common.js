@@ -130,6 +130,8 @@ export function toast(message) {
 
 /**
  * Modal prompt. fields: [{name, label, type, value, min, max, options, required, placeholder}].
+ * A text field may follow a select: `follows: {field, by: {<select value>: {value, suggestions}}}` fills in that choice's default (while the box still
+ * holds the default of the previous choice) and offers its suggestions as a list, so the box stays writable.
  * Resolves to {name: value} on confirm, or null on cancel. With no fields it is a plain confirm.
  */
 export function ask({ title, text, fields = [], confirm = 'OK', danger = false }) {
@@ -140,6 +142,22 @@ export function ask({ title, text, fields = [], confirm = 'OK', danger = false }
         : h('input', { name: f.name, type: f.type || 'text', value: f.value ?? '', min: f.min, max: f.max, step: f.step, required: f.required, placeholder: f.placeholder, maxlength: f.maxlength });
       return h('label', {}, f.label, control);
     });
+    const follow = (f) => {
+      const source = () => dialog.querySelector(`[name="${f.follows.field}"]`);
+      const box = () => dialog.querySelector(`[name="${f.name}"]`);
+      const list = h('datalist', { id: `list-${f.name}` });
+      const apply = (previous) => {
+        const now = f.follows.by[source().value] || { value: '', suggestions: [] };
+        const before = f.follows.by[previous];
+        if (!box().value || (before && box().value === before.value)) box().value = now.value;
+        list.replaceChildren(...now.suggestions.map((v) => h('option', { value: v })));
+      };
+      box().setAttribute('list', list.id);
+      box().after(list);
+      let last = source().value;
+      source().addEventListener('change', () => { apply(last); last = source().value; });
+      apply(last);
+    };
     const submit = h('button', { class: danger ? 'danger' : 'primary', type: 'submit' }, confirm);
     const dialog = h('dialog', {}, h('form', { method: 'dialog' },
       h('h2', {}, title), text && h('p', { class: 'muted', style: 'margin:0' }, text), inputs,
@@ -150,6 +168,7 @@ export function ask({ title, text, fields = [], confirm = 'OK', danger = false }
     });
     dialog.addEventListener('close', () => { dialog.remove(); resolve(result); });
     document.body.append(dialog);
+    fields.filter((f) => f.follows).forEach(follow);
     dialog.showModal();
   });
 }

@@ -152,7 +152,7 @@ def view(item, now):
         used_micro = gemini_used_micro(item, now)  # our own counter: always current
     out = {
         "available": True, "enabled": bool(s.get("enabled")), "model": model, "base_url": (proxy_url() + "/v1") if gem else base_url(),
-        "provider": provider(item), "providers": ["openrouter"] + (["gemini"] if gemini_available() else []), "gemini_models": gemini.models(),
+        "default_model": default_model(), "provider": provider(item), "providers": ["openrouter"] + (["gemini"] if gemini_available() else []), "gemini_models": gemini.models(),
         "limit_usd": limit_micro / MICRO, "period": s.get("period", "month"),
         "used_usd": used_micro / MICRO, "remaining_usd": max(limit_micro - used_micro, 0) / MICRO,
         "checked_at": s.get("checked_at"), "env_names": list(AI_ENV_NAMES) if s.get("enabled") else [], "timeout_seconds": student_timeout(),

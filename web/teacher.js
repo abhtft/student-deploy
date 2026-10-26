@@ -333,34 +333,24 @@ async function toggleAi(t) {
 async function editAi(t) {
   const a = t.ai;
   const gemini = (a.providers || []).includes('gemini');
-  const onGemini = a.provider === 'gemini';
   const fields = [{ name: 'limit_usd', label: 'Spending cap (USD)', type: 'number', value: a.limit_usd, min: 0.01, max: 20, step: 0.01, required: true },
     { name: 'period', label: 'Per', options: [['day', 'day'], ['month', 'month'], ['total', 'total (whole token life)']], value: a.period }];
   if (gemini) {
-    // the Google models are choices of this list; the free-text OpenRouter model only shows while the student is on OpenRouter
-    fields.push({ name: 'service', label: 'AI service and model', value: onGemini ? `gemini:${a.model}` : 'openrouter:',
-      options: [...a.gemini_models.map((m, i) => [`gemini:${m}`, `Google Gemini: ${m}${i ? '' : ' (default)'}`]), ['openrouter:', 'OpenRouter (model chosen below)']] });
+    fields.push({ name: 'provider', label: 'AI service', value: a.provider, options: [['gemini', 'Google Gemini'], ['openrouter', 'OpenRouter']] });
   }
-  if (!onGemini) {
-    fields.push({ name: 'model', label: 'OpenRouter model (empty = class default)', value: a.model, placeholder: 'anthropic/claude-haiku-5.5', maxlength: 80 });
-  }
+  fields.push({ name: 'model', label: 'Model (you can type another)', value: a.model, maxlength: 80, required: true,
+    follows: { field: gemini ? 'provider' : null, by: {
+      gemini: { value: a.gemini_models[0], suggestions: a.gemini_models },
+      openrouter: { value: a.default_model, suggestions: [a.default_model] } } } });
+  if (!gemini) delete fields[fields.length - 1].follows;
   const r = await ask({ title: `AI allowance for ${t.slug}`,
-    text: onGemini
-      ? `Used so far: ${usd(a.used_usd)}. The platform counts the cost of every Gemini answer itself (an answer already under way can overshoot the cap by one answer). To move this student to OpenRouter, choose it below, save, and open this dialog again to pick the OpenRouter model.`
-      : gemini
-        ? `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself. Choose Google Gemini below to move this student to it: the old key stops working and a new setup is made automatically.`
-        : `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Usage is counted a few seconds late.`,
+    text: gemini
+      ? `Used so far: ${usd(a.used_usd)}. Gemini: the platform counts the cost of every answer itself (an answer already under way can overshoot the cap by one answer). OpenRouter enforces its own cap. Changing the service gives the student a new key setup and stops the old one.`
+      : `Used so far: ${usd(a.used_usd)}. OpenRouter enforces the cap itself, so it holds even if the student's code misbehaves. Usage is counted a few seconds late.`,
     fields, confirm: 'Save' });
   if (!r) return;
-  const body = { limit_usd: Number(r.limit_usd), period: r.period };
-  if (gemini) {
-    const [provider, model] = r.service.split(':');
-    body.provider = provider;
-    if (provider === 'gemini') body.model = model;
-    else if (!onGemini) body.model = (r.model || '').trim();
-  } else {
-    body.model = (r.model || '').trim();
-  }
+  const body = { limit_usd: Number(r.limit_usd), period: r.period, model: r.model.trim() };
+  if (gemini) body.provider = r.provider;
   act(`/api/admin/tokens/${t.id}/ai`, body, 'AI allowance saved');
 }
 
