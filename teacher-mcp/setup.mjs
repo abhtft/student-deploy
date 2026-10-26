@@ -1,7 +1,7 @@
 // `class-platform-teacher-mcp setup`: add the server to VS Code and Antigravity (one entry called "class-platform-teacher"; other servers are never
 // touched; a backup is made; a settings file with comments is left alone and the exact text is printed instead).
 //
-//   npx -y class-platform-teacher-mcp@<version> setup [--yes] [--dry-run] [--editors vscode,antigravity|none]
+//   npx -y class-platform-teacher@<version> editor [--yes] [--dry-run] [--editors vscode,antigravity|none]
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -11,12 +11,17 @@ import { parseJsonc } from './jsonc.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const NAME = 'class-platform-teacher';
-const PACKAGE = 'class-platform-teacher-mcp';
-const packageVersion = () => { try { return JSON.parse(readFileSync(join(here, 'package.json'), 'utf8')).version; } catch { return '0.0.0'; } };
+const PACKAGE = 'class-platform-teacher';
+const packageVersion = () => {
+  for (const file of [join(here, '..', 'package.json'), join(here, 'package.json')]) { // inside the npm package this file sits in mcp/, the package.json one level up
+    try { const p = JSON.parse(readFileSync(file, 'utf8')); if (p.name === PACKAGE || p.name === 'class-platform-teacher-mcp') return p.version; } catch { /* try the next place */ }
+  }
+  return '0.0.0';
+};
 
 /** What the editor runs: npx with the pinned version (Windows editors need cmd /c to find npx). */
 export function entryFor(version = packageVersion(), platform = process.platform) {
-  const npx = ['-y', `${PACKAGE}@${version}`];
+  const npx = ['-y', `${PACKAGE}@${version}`, 'mcp'];
   return platform === 'win32' ? { command: 'cmd', args: ['/c', 'npx', ...npx] } : { command: 'npx', args: npx };
 }
 
@@ -83,5 +88,5 @@ export async function main(argv) {
   }
   rl?.close();
   if (manual.length || skipAll || !found.length) { say(`\nPut this into the editor's MCP settings (inside "servers" for VS Code, "mcpServers" for Antigravity):`); say(JSON.stringify({ [NAME]: entry }, null, 2)); }
-  say('\nNext: restart the editor, open the platform folder (your clone of the repository) and tell the AI:  check my AWS account for the class platform');
+  say('\nNext: restart the editor and tell the AI:  check my AWS account for the class platform');
 }

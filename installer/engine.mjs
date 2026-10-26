@@ -6,7 +6,7 @@
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 export const REGION = 'us-east-1'; // CloudFront certificates must live here, so the whole stack does
@@ -48,7 +48,9 @@ function call(ctx, args, { json = false } = {}) {
 }
 
 // ---------- configuration ----------
-const statePath = (ctx) => join(ctx.repo, '.class-platform', 'install.json');
+/** Where the install state lives: next to the clone, or (when run from the npm package, whose folder is a read-only cache) in the teacher's home folder. */
+export const stateDir = (ctx) => ctx.stateDir ?? (existsSync(join(ctx.repo, '.packaged')) ? (process.env.CLASS_PLATFORM_TEACHER_HOME || join(homedir(), '.class-platform-teacher')) : join(ctx.repo, '.class-platform'));
+const statePath = (ctx) => join(stateDir(ctx), 'install.json');
 
 export function readState(ctx) {
   try { return JSON.parse(readFileSync(statePath(ctx), 'utf8')); } catch { return null; }
@@ -56,7 +58,7 @@ export function readState(ctx) {
 
 function writeState(ctx, state) {
   if (ctx.dryRun) return;
-  mkdirSync(join(ctx.repo, '.class-platform'), { recursive: true });
+  mkdirSync(stateDir(ctx), { recursive: true });
   writeFileSync(statePath(ctx), `${JSON.stringify(state, null, 2)}\n`);
 }
 
@@ -147,7 +149,7 @@ export async function ensureCertificate(ctx, domain) {
   const listed = call(ctx, ['acm', 'list-certificates', '--certificate-statuses', 'ISSUED', 'PENDING_VALIDATION'], { json: true }).CertificateSummaryList ?? [];
   let arn = listed.find((c) => c.DomainName === name)?.CertificateArn;
   if (!arn) arn = call(ctx, ['acm', 'request-certificate', '--domain-name', name, '--validation-method', 'DNS'], { json: true }).CertificateArn;
-  if (ctx.dryRun && !arn) return { arn: 'arn:aws:acm:us-east-1:000000000000:certificate/dry-run', record: null, issued: false };
+  if (ctx.dryRun && !arn) return { arn: 'arn:aws:acm:us-east-1:<account>:certificate/dry-run', record: null, issued: false };
   let cert;
   for (let i = 0; i < 12; i += 1) { // the validation record appears a few seconds after the request
     cert = call(ctx, ['acm', 'describe-certificate', '--certificate-arn', arn], { json: true }).Certificate;

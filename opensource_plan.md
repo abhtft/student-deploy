@@ -92,3 +92,9 @@ Move 2 and the update path were built together, in the order the plan asked (eng
 - `VERSION`, `CHANGELOG.md`, `docs/TEACHER_SETUP.md`; tests `tests/test_installer.mjs` (fake AWS CLI) and `tests/test_teacher_mcp.mjs`.
 
 Still to do: the first real install in the new account (manual, by the owner), publishing `class-platform-teacher-mcp` to npm, `latest.json`/update banner on the teacher page, the upgrade test in CI (install previous tag, upgrade, smoke), the scrub of remaining identifiers in docs, LICENSE/SECURITY/CONTRIBUTING (Move 3).
+
+### 7.1 The npm package (built the same day)
+
+`build-teacher-package.mjs` builds the package `class-platform-teacher` (name is a placeholder until you choose; change `PACKAGE_NAME`) from the files git tracks: the platform (`template.yaml`, `lambda/`, `web/`, the student kit sources), the installer and the teacher MCP. Version = `VERSION`. State lives in `~/.class-platform-teacher` (the package folder is a read-only cache); a fresh computer adopts the stack from AWS. Commands: `install`, `upgrade`, `status`, `plan`, `apply`, `teacher`, `secrets`, `publish`, `finish-domain`, `destroy`, `editor` (adds the MCP to VS Code/Antigravity), `mcp` (the server), `eject <folder>`. Test: `tests/test_teacher_package.mjs` (contents, no personal files, kit and MCP package byte-identical to the repository's, commands, state folder, MCP from the package).
+
+Publishing (owner, when ready): `node build-teacher-package.mjs --pack`, then `npm publish --provenance --access public` from `dist/teacher-package` (needs an npm login; best done from CI on a release tag).

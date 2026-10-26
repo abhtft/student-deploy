@@ -1,6 +1,13 @@
 # Install and update your own copy (teacher guide)
 
-You run the platform in **your own AWS account**. This page covers the first install, keeping it up to date, switching features on, and doing all of it from your AI editor with the teacher MCP. Technical background: [NEW_ACCOUNT_AND_TRANSFER.md](NEW_ACCOUNT_AND_TRANSFER.md). What changed in each version: [../CHANGELOG.md](../CHANGELOG.md).
+You run the platform in **your own AWS account**, from **one command**; nothing is cloned. This page covers the first install, keeping it up to date, switching features on, and doing all of it from your AI editor with the teacher MCP.
+
+```bash
+npx -y class-platform-teacher install              # first install (guided)
+npx -y class-platform-teacher@<new version> upgrade   # later, when a new version is out
+```
+
+Everywhere below, `node setup.mjs <command>` (from a git clone) and `npx -y class-platform-teacher <command>` are the same thing. Your install state is kept in `~/.class-platform-teacher` and can always be rebuilt from the AWS stack, so a new computer just works. Technical background: [NEW_ACCOUNT_AND_TRANSFER.md](NEW_ACCOUNT_AND_TRANSFER.md). What changed in each version: [../CHANGELOG.md](../CHANGELOG.md).
 
 ## 1. What you need
 
@@ -9,7 +16,7 @@ You run the platform in **your own AWS account**. This page covers the first ins
 | An AWS account | New accounts can refuse their first CloudFront distribution until AWS verifies them (an AWS Support case, "Account and billing"). The installer detects this and tells you |
 | The AWS CLI, signed in | `aws configure` (or `aws configure --profile mine`) with an IAM user that has **AdministratorAccess** |
 | Node 20 or newer | https://nodejs.org/ |
-| A clone of this repository | `git clone <repository>` then `cd` into it |
+| Nothing else to download | The package carries the platform. (Contributors and people who want to change the code use `git clone` instead, or `npx class-platform-teacher eject <folder>`) |
 | Optional: a domain you control | Without one, the platform works on free `cloudfront.net` addresses (best for a first try) |
 
 You do **not** need the SAM CLI, Docker or Python.
@@ -17,10 +24,10 @@ You do **not** need the SAM CLI, Docker or Python.
 ## 2. Install
 
 ```bash
-node setup.mjs
+npx -y class-platform-teacher install
 ```
 
-It asks, in this order: the AWS profile, an optional domain, which optional features to switch on (all default off), your teacher login name and password (hidden), and, if you chose AI, the AI keys (hidden, stored in AWS Secrets Manager, never in a file). It then checks the account, deploys (about 10 to 15 minutes, CloudFront is slow), publishes the portal pages, the student kit and the MCP package, and checks that the portal answers. Try `node setup.mjs install --dry-run` first to see every AWS command it would run without running any.
+It asks, in this order: the AWS profile, an optional domain, which optional features to switch on (all default off), your teacher login name and password (hidden), and, if you chose AI, the AI keys (hidden, stored in AWS Secrets Manager, never in a file). It then checks the account, deploys (about 10 to 15 minutes, CloudFront is slow), publishes the portal pages, the student kit and the MCP package, and checks that the portal answers. Try `npx -y class-platform-teacher install --dry-run` first to see every AWS command it would run without running any.
 
 **With a domain** (for example `apps.example.com`) there are two pauses, because DNS is yours:
 1. It requests a certificate and prints **one DNS record**; add it at your DNS host, wait a few minutes, run the same command again.
@@ -31,11 +38,10 @@ When it ends it prints your portal address. Sign in at `<portal>/teacher.html`, 
 ## 3. Keep it up to date
 
 ```bash
-git pull
-node setup.mjs upgrade
+npx -y class-platform-teacher@<new version> upgrade
 ```
 
-`upgrade` shows what would change in plain words ("adds 1, modifies 3, replaces no data"), asks, applies exactly that plan and republishes the portal, kit and MCP package. Safety rules it enforces:
+(With a git clone: `git pull`, then `node setup.mjs upgrade`.) `upgrade` shows what would change in plain words ("adds 1, modifies 3, replaces no data"), asks, applies exactly that plan and republishes the portal, kit and MCP package. Safety rules it enforces:
 - New features arrive **switched off**; nothing changes for you until you turn them on.
 - An update that would replace or remove a data-holding resource (tables, buckets, secrets, distributions) is **refused** and nothing is changed.
 - `apply` only runs the plan that was shown, by its id. If the change set changed or expired, you get a new plan.
@@ -57,14 +63,14 @@ Features: `backend` (a small server per student), `ai` (OpenRouter, needs `backe
 Add it once:
 
 ```bash
-npx -y class-platform-teacher-mcp setup
+npx -y class-platform-teacher editor
 ```
 
-It finds VS Code and Antigravity, shows exactly what it will add, asks, backs up the settings file and merges one entry, `class-platform-teacher`. Restart the editor, **open your clone of the repository**, and say things like:
+It finds VS Code and Antigravity, shows exactly what it will add, asks, backs up the settings file and merges one entry, `class-platform-teacher`, pinned to this version (the editor then runs `class-platform-teacher mcp`). No folder needs to be open. Restart the editor and say things like:
 
 - "Check my AWS account for the class platform"
 - "Install the platform, try mode" (it asks you to confirm the account first, then works in the background)
-- "I ran git pull: plan an update" then "apply it"
+- "A new version is out: plan an update" then "apply it"
 - "Turn on class storage"
 
 | Tool | Does | Asks first |

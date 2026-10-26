@@ -155,8 +155,8 @@ console.log('  ok  the open folder is learned from the editor; without one the m
 
 // ---------- editor setup ----------
 const { plan: planEditor, apply: applyEditor, entryFor } = await import('../teacher-mcp/setup.mjs');
-assert.deepEqual(entryFor('1.0.0', 'win32'), { command: 'cmd', args: ['/c', 'npx', '-y', 'class-platform-teacher-mcp' + '@1.0.0'] });
-assert.deepEqual(entryFor('1.0.0', 'linux'), { command: 'npx', args: ['-y', 'class-platform-teacher-mcp' + '@1.0.0'] });
+assert.deepEqual(entryFor('1.0.0', 'win32'), { command: 'cmd', args: ['/c', 'npx', '-y', 'class-platform-teacher' + '@1.0.0', 'mcp'] });
+assert.deepEqual(entryFor('1.0.0', 'linux'), { command: 'npx', args: ['-y', 'class-platform-teacher' + '@1.0.0', 'mcp'] });
 const file = join(work, 'mcp.json');
 const editor = { id: 'vscode', name: 'VS Code', file, key: 'servers', typed: true };
 const created = planEditor(editor, entryFor('1.0.0', 'linux'));

@@ -9,3 +9,4 @@ __pycache__/
 
 # installer state (account, stack, last plan)
 .class-platform/
+dist/
