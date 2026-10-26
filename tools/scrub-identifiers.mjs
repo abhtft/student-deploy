@@ -36,7 +36,7 @@ export function loadLocal() {
 export function rules() {
   const { domain, literals } = loadLocal();
   const out = Object.entries(literals).sort((a, b) => b[0].length - a[0].length).map(([from, to]) => [new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), to]);
-  // the regex-escaped form (margdarshakss\.com), as written in test assertions
+  // the regex-escaped form (example.edu), as written in test assertions
   if (domain) out.push([new RegExp(domain.split('.').join('\\\\\\.'), 'gi'), PLACEHOLDER_DOMAIN.split('.').join('\\.')]);
   if (domain) out.push([new RegExp(domain.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), PLACEHOLDER_DOMAIN]);
   out.push([/(arn:aws:[a-z0-9-]+:[a-z0-9-]*:)\d{12}(:)/g, '$1<ACCOUNT_ID>$2']);

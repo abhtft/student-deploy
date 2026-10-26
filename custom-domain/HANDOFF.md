@@ -64,4 +64,4 @@ The test tenant currently returns 403: this project's bucket policy only allows 
 
 ## Credentials
 `teacher-login.local` (git-ignored) holds the portal teacher username/password set on 2026-10-20.
-Change with `node admin.mjs teacher-setup abhishek`.
+Change with `node admin.mjs teacher-setup <username>`.
