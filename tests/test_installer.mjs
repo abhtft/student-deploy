@@ -167,6 +167,7 @@ const fails = async (fn, pattern) => { try { await fn(); } catch (e) { assert.ma
   const s = await engine.status(ctx);
   assert.deepEqual([s.installed, s.domain, s.features], [true, 'apps.example.com', ['backend', 'ai']]);
   assert.equal(stateOf().adopted, true);
+  reset();
   assert.equal(engine.adoptState(context(fakeAws()).ctx), null, 'no stack, nothing to adopt');
   console.log('  ok  a fresh clone adopts the existing stack (domain and features read from the account)');
 }
