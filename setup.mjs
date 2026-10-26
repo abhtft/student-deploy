@@ -120,7 +120,7 @@ export async function main(argv, overrides = {}) {
   try {
     switch (command) {
       case 'wizard': case 'install': {
-        if (flags.json || command === 'install' && (flags.domain !== undefined || flags.features !== undefined || flags.yes)) {
+        if (flags.json || !process.stdin.isTTY || command === 'install' && (flags.domain !== undefined || flags.features !== undefined || flags.yes)) { // no terminal, or all choices given as flags: no questions
           return finish(await engine.install(ctx, { domain: flags.domain, features: (flags.features || '').split(',').filter(Boolean), certificateArn: flags['certificate-arn'] }));
         }
         const { answers, password, keys } = await wizard(ctx, flags);
